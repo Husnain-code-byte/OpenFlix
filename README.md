@@ -1,41 +1,55 @@
-# OpenFlix
+<div align="center">
+  <img src="website/favicon.png" width="80" alt="OpenFlix Logo" />
+  <h1>OpenFlix</h1>
+  <p><strong>An open-source, OLED-black Android media client built with Flutter & libmpv.</strong></p>
 
-An open-source Android media streaming client engineered for a cinema-grade OLED UI, smooth 60fps performance on 3GB RAM devices, 1-click TMDB sync, and Stremio/CloudStream addon playback.
+  <p>
+    <a href="https://openflix-6h8.pages.dev">
+      <img src="https://img.shields.io/badge/Website-1--Click_Download-E50914?style=for-the-badge" alt="1-Click Download" />
+    </a>
+    <a href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">
+      <img src="https://img.shields.io/github/v/release/Husnain-code-byte/OpenFlix?style=for-the-badge&color=18181b&label=Release" alt="Latest Release" />
+    </a>
+    <a href="https://discord.gg/y5QssSBcpJ">
+      <img src="https://img.shields.io/badge/Discord-Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" />
+    </a>
+  </p>
+</div>
 
-## Highlights
-- **OLED-Black Cinema UI:** Custom poster-by-poster carousel snapping, responsive scaling, and minimal clutter.
-- **High-Performance Playback:** Powered by `media_kit` (`libmpv`) with an in-player **Links** switcher, Skip Intro, and Play Next.
-- **1-Click TMDB Sync:** Watchlists, liked titles, curated franchises, and your custom TMDB lists out of the box.
-- **Built for Constrained Hardware:** Tuned image caching and memory limits for 3GB RAM Android phones.
-- **Built-In Update Checker:** Checks GitHub Releases automatically and grabs the right APK for your CPU.
-
-## Download (Android)
-Grab the latest signed APK from [**Releases**](https://github.com/Husnain-code-byte/OpenFlix/releases/latest):
-- **`OpenFlix-v1.0.0-arm64-v8a.apk`** — Recommended for almost all modern Android phones (~78 MB).
-- **`OpenFlix-v1.0.0-universal.apk`** — Use if you're unsure of your device's architecture (~118 MB).
-
-## Community & Support
-- **Discord:** [Join the OpenFlix Server](https://discord.gg/y5QssSBcpJ) for setup help, bug reports, and feature requests.
+---
 
 ## Screenshots
+
 <p align="center">
-<img width="714" height="1599" alt="WhatsApp Image 2026-11-21 at 11 09 08 PM" src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e" />
-<img width="714" height="1599" alt="2026ed65-62b8-4ec8-a2c7-b1bc41e84766" src="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d" />
-<img width="714" height="1599" alt="17e0b048-67a7-4702-a278-65c1cab96c96" src="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e" />
-<img width="714" height="1599" alt="WhatsApp Image 2026-11-21 at 11 13 15 PM" src="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d" />
-<img width="720" height="1612" alt="65e48ffe-9e6a-44ed-9e18-f2609909800d" src="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe" />
+  <img src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e" width="19%" alt="Home Feed" />
+  <img src="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d" width="19%" alt="Curated Rows" />
+  <img src="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e" width="19%" alt="Title Details" />
+  <img src="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d" width="19%" alt="Collections" />
+  <img src="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe" width="19%" alt="Player & Addons" />
 </p>
 
-## Building from Source
-1. Create `.env.prod.json` in the project root:
-   ```json
-   { "TMDB_API_KEY": "your_tmdb_v3_api_key" }
-   ```
-2. Build the release APK:
-   ```bash
-   flutter pub get
-   flutter build apk --release --target-platform android-arm64 --dart-define-from-file=.env.prod.json
-   ```
+## Features
+
+- **OLED-Black Cinema UI:** Matte-black interface with exact poster-by-poster carousel snapping and full responsive scaling.
+- **libmpv Playback Engine:** Hardware-accelerated playback powered by `media_kit`, with an in-player **Links** switcher, Skip Intro, Play Next, and remembered audio/subtitle preferences.
+- **1-Click TMDB Sync:** Sync watchlists, liked titles, curated film collections, and custom TMDB lists automatically.
+- **Stremio & CloudStream Addons:** Bring your own Stremio manifests and CloudStream repositories inside a unified resolver.
+- **Tuned for 3GB RAM Devices:** Capped bitmap caches and lazy collection loading keep scrolling smooth at 60fps on budget Android hardware.
+- **Built-In Update Checker:** Checks GitHub Releases directly from **My OpenFlix** and pulls the matching signed APK for your architecture.
+
+## Download
+
+Grab the latest signed APK from the **[Download Website](https://openflix-6h8.pages.dev)** or **[GitHub Releases](https://github.com/Husnain-code-byte/OpenFlix/releases/latest)**:
+
+| APK | Target Devices | Size |
+| :--- | :--- | :--- |
+| `arm64-v8a` *(Recommended)* | Modern 64-bit Android smartphones | ~78 MB |
+| `universal` | Older 32-bit or unknown devices | ~117 MB |
+
+## Community & Feedback
+
+Found a bug or want to suggest a feature for upcoming releases? Open a [GitHub Issue](https://github.com/Husnain-code-byte/OpenFlix/issues) or join the [Discord server](https://discord.gg/y5QssSBcpJ).
 
 ## Disclaimer
-OpenFlix is a media client and metadata browser. It does not host, provide, or distribute any media content. Users are solely responsible for any third-party addons they configure.
+
+OpenFlix is strictly a media client and metadata browser. It does not host, provide, or distribute any media content. Users are solely responsible for any third-party addons or repositories they configure.
