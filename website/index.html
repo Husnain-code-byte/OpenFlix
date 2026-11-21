@@ -91,7 +91,7 @@
     }
     .btn-red-sm:hover { background: var(--red-hover); }
 
-    /* ================= HERO + TILTED MOVING POSTER WALL ================= */
+    /* ================= HERO + COMPACT 10-COLUMN POSTER WALL ================= */
     .hero {
       position: relative;
       min-height: 92vh;
@@ -106,12 +106,12 @@
 
     .poster-wall {
       position: absolute;
-      inset: -18% -12%;
+      inset: -14% -8%;
       z-index: 0;
       display: grid;
-      grid-template-columns: repeat(6, 1fr);
-      gap: 12px;
-      transform: rotate(-10deg) scale(1.12);
+      grid-template-columns: repeat(10, 1fr);
+      gap: 10px;
+      transform: rotate(-10deg) scale(1.05);
       pointer-events: none;
       user-select: none;
     }
@@ -124,14 +124,14 @@
       flex-direction: column;
       will-change: transform;
     }
-    .poster-col.up .poster-track { animation: scrollUp var(--dur, 48s) linear infinite; }
-    .poster-col.down .poster-track { animation: scrollDown var(--dur, 52s) linear infinite; }
+    .poster-col.up .poster-track { animation: scrollUp var(--dur, 40s) linear infinite; }
+    .poster-col.down .poster-track { animation: scrollDown var(--dur, 44s) linear infinite; }
 
     .poster-tile {
       width: 100%;
       aspect-ratio: 2 / 3;
-      margin-bottom: 12px;
-      border-radius: 6px;
+      margin-bottom: 10px;
+      border-radius: 5px;
       overflow: hidden;
       background: #141414;
       flex-shrink: 0;
@@ -155,7 +155,6 @@
       100% { transform: translate3d(0, 0, 0); }
     }
 
-    /* Netflix-style balanced dark vignette — posters stay vivid, text stays sharp */
     .hero-overlay {
       position: absolute;
       inset: 0;
@@ -248,7 +247,7 @@
       text-underline-offset: 3px;
     }
 
-    /* ================= NETFLIX CURVED ARC DIVIDER ================= */
+    /* ================= CURVED ARC DIVIDER ================= */
     .curve-container {
       position: relative;
       height: 76px;
@@ -306,7 +305,7 @@
       letter-spacing: -0.015em;
     }
 
-    /* ================= APP SCREENSHOTS ROW (TRENDING NOW STYLE) ================= */
+    /* ================= APP SCREENSHOTS ROW ================= */
     .carousel-wrap {
       position: relative;
     }
@@ -388,7 +387,7 @@
     .arrow-right { right: -6px; }
     .arrow-left { left: -6px; }
 
-    /* ================= 4 FEATURE CARDS (MORE REASONS TO JOIN STYLE) ================= */
+    /* ================= 4 FEATURE CARDS ================= */
     .reasons-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -422,7 +421,7 @@
       height: 58px;
     }
 
-    /* ================= FAQ ACCORDION (EXACT NETFLIX STYLE) ================= */
+    /* ================= FAQ ACCORDION ================= */
     .faq-list {
       display: flex;
       flex-direction: column;
@@ -541,8 +540,8 @@
 
     /* ================= RESPONSIVE ================= */
     @media (max-width: 1024px) {
-      .poster-wall { grid-template-columns: repeat(4, 1fr); }
-      .poster-col:nth-child(n+5) { display: none; }
+      .poster-wall { grid-template-columns: repeat(6, 1fr); }
+      .poster-col:nth-child(n+7) { display: none; }
       .reasons-grid { grid-template-columns: repeat(2, 1fr); }
       .reason-card { min-height: 210px; }
     }
@@ -551,8 +550,8 @@
       .header { padding: 18px 20px; }
       .btn-ghost-sm { display: none; }
       .hero { min-height: 82vh; padding: 104px 20px 110px; }
-      .poster-wall { grid-template-columns: repeat(3, 1fr); gap: 8px; }
-      .poster-col:nth-child(n+4) { display: none; }
+      .poster-wall { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+      .poster-col:nth-child(n+5) { display: none; }
       .hero-cta-row { flex-direction: column; width: 100%; }
       .btn-hero, .btn-hero-secondary { width: 100%; font-size: 1.05rem; }
       .main-wrap { padding: 4px 20px 64px; }
@@ -580,7 +579,7 @@
     </div>
   </header>
 
-  <!-- HERO WITH TILTED ALTERNATING POSTER WALL -->
+  <!-- HERO WITH COMPACT 10-COLUMN ALTERNATING POSTER WALL -->
   <section class="hero">
     <div class="poster-wall" id="poster-wall" aria-hidden="true"></div>
     <div class="hero-overlay" aria-hidden="true"></div>
@@ -607,15 +606,15 @@
     </div>
   </section>
 
-  <!-- SIGNATURE CURVED ARC DIVIDER -->
+  <!-- CURVED ARC DIVIDER -->
   <div class="curve-container" aria-hidden="true">
     <div class="curve-arc"></div>
   </div>
 
-  <!-- MAIN CONTENT ON PURE BLACK -->
+  <!-- MAIN CONTENT -->
   <main class="main-wrap">
 
-    <!-- 1. INSIDE OPENFLIX (5 SCREENSHOTS IN TRENDING NOW ROW) -->
+    <!-- 1. INSIDE OPENFLIX -->
     <section class="section" id="preview">
       <h2 class="section-title">Inside OpenFlix</h2>
       <div class="carousel-wrap">
@@ -667,7 +666,7 @@
       </div>
     </section>
 
-    <!-- 2. MORE REASONS TO USE OPENFLIX (4 NETFLIX GRADIENT CARDS) -->
+    <!-- 2. MORE REASONS TO SWITCH -->
     <section class="section" id="features">
       <h2 class="section-title">More Reasons to Switch</h2>
       <div class="reasons-grid">
@@ -720,7 +719,7 @@
       </div>
     </section>
 
-    <!-- 3. FREQUENTLY ASKED QUESTIONS (EXACT NETFLIX ACCORDION) -->
+    <!-- 3. FREQUENTLY ASKED QUESTIONS -->
     <section class="section" id="faq">
       <h2 class="section-title">Frequently Asked Questions</h2>
       <div class="faq-list">
@@ -785,25 +784,28 @@
   </div>
 
   <script>
-    // 1. 6-column alternating vertical poster wall (Movies, TV Shows & Anime via btttr.cc)
-    const posterColumns = [
-      ["tt0816692", "tt15239678", "tt0468569", "tt1856101", "tt1375666", "tt15398776", "tt9362722"],
-      ["tt0903747", "tt4574334", "tt3581920", "tt5753856", "tt11280740", "tt0944947", "tt7366338"],
-      ["tt14986406", "tt2560140", "tt12343534", "tt9335498", "tt21209876", "tt0877057", "tt10233448"],
-      ["tt4154796", "tt1877830", "tt10366206", "tt1160419", "tt1745960", "tt6751668", "tt7286456"],
-      ["tt11126994", "tt2442560", "tt1190634", "tt3032476", "tt11198330", "tt8111088", "tt1196946"],
-      ["tt0133093", "tt0137523", "tt0388629", "tt13706018", "tt7441658", "tt1355642", "tt13616990"]
+    // 1. Compact 10-column alternating vertical poster wall (Movies, TV & Anime via btttr.cc)
+    const allPosters = [
+      "tt0816692", "tt15239678", "tt0468569", "tt1856101", "tt1375666", "tt15398776", "tt9362722",
+      "tt0903747", "tt4574334", "tt3581920", "tt5753856", "tt11280740", "tt0944947", "tt7366338",
+      "tt14986406", "tt2560140", "tt12343534", "tt9335498", "tt21209876", "tt0877057", "tt10233448",
+      "tt4154796", "tt1877830", "tt10366206", "tt1160419", "tt1745960", "tt6751668", "tt7286456",
+      "tt11126994", "tt2442560", "tt1190634", "tt3032476", "tt11198330", "tt8111088", "tt1196946",
+      "tt0133093", "tt0137523", "tt0388629", "tt13706018", "tt7441658", "tt1355642", "tt13616990"
     ];
-    const speeds = [46, 54, 48, 56, 50, 52];
+    const speeds = [36, 42, 38, 44, 35, 41, 39, 45, 37, 43];
     const wall = document.getElementById("poster-wall");
 
-    posterColumns.forEach((ids, i) => {
+    for (let i = 0; i < 10; i++) {
       const col = document.createElement("div");
       col.className = "poster-col " + (i % 2 === 0 ? "up" : "down");
       col.style.setProperty("--dur", speeds[i] + "s");
 
       const track = document.createElement("div");
       track.className = "poster-track";
+
+      const start = (i * 5) % allPosters.length;
+      const ids = Array.from({ length: 7 }, (_, k) => allPosters[(start + k) % allPosters.length]);
 
       ids.concat(ids).forEach((id, j) => {
         const tile = document.createElement("div");
@@ -812,7 +814,7 @@
         img.src = `https://btttr.cc/poster-a/imdb/poster-default/${id}.jpg`;
         img.alt = "";
         img.decoding = "async";
-        img.loading = j < 4 ? "eager" : "lazy";
+        img.loading = j < 5 ? "eager" : "lazy";
         img.onload = () => img.classList.add("loaded");
         img.onerror = () => (tile.style.display = "none");
         tile.appendChild(img);
@@ -821,9 +823,9 @@
 
       col.appendChild(track);
       wall.appendChild(col);
-    });
+    }
 
-    // 2. Carousel horizontal arrows
+    // 2. Carousel arrows
     const shotsRow = document.getElementById("shots-row");
     document.getElementById("scroll-left").addEventListener("click", () => {
       shotsRow.scrollBy({ left: -260, behavior: "smooth" });
@@ -846,7 +848,7 @@
       if (e.key === "Escape") lightbox.classList.remove("open");
     });
 
-    // 4. FAQ Accordion (single-open like Netflix)
+    // 4. FAQ Accordion
     document.querySelectorAll(".faq-q").forEach(btn => {
       btn.addEventListener("click", () => {
         const item = btn.parentElement;
