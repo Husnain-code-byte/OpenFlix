@@ -17,6 +17,15 @@ Grab the latest signed APK from [**Releases**](https://github.com/Husnain-code-b
 ## Community & Support
 - **Discord:** [Join the OpenFlix Server](https://discord.gg/y5QssSBcpJ) for setup help, bug reports, and feature requests.
 
+## Screenshots
+<p align="center">
+<img width="720" height="1612" alt="65e48ffe-9e6a-44ed-9e18-f2609909800d" src="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe" />
+<img width="714" height="1599" alt="WhatsApp Image 2026-11-21 at 11 13 15 PM" src="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d" />
+<img width="714" height="1599" alt="17e0b048-67a7-4702-a278-65c1cab96c96" src="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e" />
+<img width="714" height="1599" alt="2026ed65-62b8-4ec8-a2c7-b1bc41e84766" src="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d" />
+<img width="714" height="1599" alt="WhatsApp Image 2026-11-21 at 11 09 08 PM" src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e" />
+</p>
+
 ## Building from Source
 1. Create `.env.prod.json` in the project root:
    ```json
