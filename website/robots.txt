@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://openflix-6h8.pages.dev/sitemap.xml
