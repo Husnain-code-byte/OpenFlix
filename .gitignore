@@ -1,0 +1,69 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+/android/.gradle/
+/android/captures/
+/android/local.properties
+/android/GeneratedPluginRegistrant.java
+
+# Android signing keys & keystores (never commit)
+android/key.properties
+**/key.properties
+*.jks
+*.keystore
+
+# Environment & secrets files (never commit)
+.env
+.env*
+
+# Widget Preview related
+.widget_preview/
+
+# Local dev notes & scratch assets
+.agsignore
+GEMINI.md
+TITLE_BACKDROP_BLUR_ROADMAP.md
+Ic_launcher.png
+the_iconic_cinema_wordmark_logo_openflix_in_bold_condensed_uppercase_lettering.png
