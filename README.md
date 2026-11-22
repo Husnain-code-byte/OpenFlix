@@ -16,6 +16,8 @@
   </p>
 </div>
 
+![Downloads](https://img.shields.io/github/downloads/Husnain-code-byte/OpenFlix/total)
+
 ---
 
 ## Screenshots
