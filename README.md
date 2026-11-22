@@ -10,13 +10,14 @@
     <a href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">
       <img src="https://img.shields.io/github/v/release/Husnain-code-byte/OpenFlix?style=for-the-badge&color=18181b&label=Release" alt="Latest Release" />
     </a>
+    <a href="https://github.com/Husnain-code-byte/OpenFlix/releases">
+      <img src="https://img.shields.io/github/downloads/Husnain-code-byte/OpenFlix/total?style=for-the-badge&color=18181b&label=Downloads" alt="Total Downloads" />
+    </a>
     <a href="https://discord.gg/y5QssSBcpJ">
       <img src="https://img.shields.io/badge/Discord-Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" />
     </a>
   </p>
 </div>
-
-![Downloads](https://img.shields.io/github/downloads/Husnain-code-byte/OpenFlix/total)
 
 ---
 
