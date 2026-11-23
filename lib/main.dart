@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'core/network/network_monitor.dart';
 import 'core/services/update_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/responsive.dart';
@@ -30,6 +31,7 @@ void main() {
   try {
     MediaKit.ensureInitialized();
   } catch (_) {}
+  NetworkMonitor.instance.initialize();
 
   // Low-RAM tuning: cap the decoded-image cache so a 3GB device never churns,
   // while keeping enough count headroom for long episode lists + poster rows.

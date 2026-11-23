@@ -322,7 +322,7 @@ class _CollectionDetailsScreenState
           SliverFillRemaining(
             hasScrollBody: false,
             child: AppStatusCard.fromError(
-              UserError.from(row.error, fallbackType: UserErrorType.offline),
+              UserError.from(row.error, logTag: 'CollectionDetails.grid'),
               onAction: () => controller.retryRow(row.config.key),
             ),
           ),
@@ -394,7 +394,7 @@ class _CollectionDetailsScreenState
       return SliverFillRemaining(
         hasScrollBody: false,
         child: AppStatusCard.fromError(
-          UserError.from(rows.first.error, fallbackType: UserErrorType.offline),
+          UserError.from(rows.first.error, logTag: 'CollectionDetails.rows'),
           onAction: controller.refresh,
         ),
       );

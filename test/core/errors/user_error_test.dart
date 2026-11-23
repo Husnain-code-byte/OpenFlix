@@ -4,25 +4,64 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pixel/core/errors/user_error.dart';
+import 'package:pixel/core/network/network_monitor.dart';
 
 void main() {
-  group('UserError.from', () {
-    test('maps SocketException and network strings to offline without leaking technical text', () {
-      final err1 = UserError.from(const SocketException('Failed host lookup: api.themoviedb.org'));
-      expect(err1.type, UserErrorType.offline);
-      expect(err1.title, "You're offline");
-      expect(err1.message.toLowerCase(), isNot(contains('socket')));
-      expect(err1.message.toLowerCase(), isNot(contains('themoviedb')));
-      expect(err1.action, UserErrorAction.retry);
+  tearDown(() {
+    NetworkMonitor.instance.resetForTesting();
+  });
 
-      final err2 = UserError.from(
+  group('UserError.from', () {
+    test('classifies SocketException / connectionError as offline ONLY when device is confirmed offline', () {
+      // Device genuinely offline -> "You're offline"
+      final offlineErr1 = UserError.from(
+        const SocketException('Failed host lookup: api.themoviedb.org'),
+        isDeviceOffline: true,
+      );
+      expect(offlineErr1.type, UserErrorType.offline);
+      expect(offlineErr1.title, "You're offline");
+      expect(offlineErr1.message.toLowerCase(), isNot(contains('socket')));
+      expect(offlineErr1.message.toLowerCase(), isNot(contains('themoviedb')));
+      expect(offlineErr1.action, UserErrorAction.retry);
+
+      final offlineErr2 = UserError.from(
         DioException(
           requestOptions: RequestOptions(path: 'https://api.example.com/v3'),
           type: DioExceptionType.connectionError,
         ),
+        isDeviceOffline: true,
       );
-      expect(err2.type, UserErrorType.offline);
-      expect(err2.title, "You're offline");
+      expect(offlineErr2.type, UserErrorType.offline);
+      expect(offlineErr2.title, "You're offline");
+
+      // Device is ONLINE -> NEVER falsely claim "You're offline"!
+      final onlineErr = UserError.from(
+        DioException(
+          requestOptions: RequestOptions(path: 'https://api.themoviedb.org/3/movie/popular'),
+          type: DioExceptionType.connectionError,
+        ),
+        isDeviceOffline: false,
+      );
+      expect(onlineErr.type, isNot(UserErrorType.offline));
+      expect(onlineErr.title, "Couldn't load catalog");
+    });
+
+    test('never classifies TLS HandshakeException, badCertificate, or cancel as offline', () {
+      final tlsErr = UserError.from(
+        const HandshakeException('TLS handshake failed'),
+        isDeviceOffline: false,
+      );
+      expect(tlsErr.type, isNot(UserErrorType.offline));
+      expect(tlsErr.title, 'Connection failed');
+
+      final cancelErr = UserError.from(
+        DioException(
+          requestOptions: RequestOptions(path: '/movie/popular'),
+          type: DioExceptionType.cancel,
+        ),
+        isDeviceOffline: false,
+      );
+      expect(cancelErr.type, isNot(UserErrorType.offline));
     });
 
     test('maps TimeoutException and Dio timeouts to timeout', () {

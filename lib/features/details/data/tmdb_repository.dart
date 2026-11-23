@@ -26,9 +26,16 @@ typedef PersonalizedArtwork = ({
 });
 
 class TmdbException implements Exception {
-  const TmdbException(this.message, {this.statusCode});
+  const TmdbException(
+    this.message, {
+    this.statusCode,
+    this.dioType,
+    this.cause,
+  });
   final String message;
   final int? statusCode;
+  final DioExceptionType? dioType;
+  final Object? cause;
 
   @override
   String toString() => message;
@@ -6828,22 +6835,31 @@ class TmdbRepository {
       if (data is Map<String, dynamic>) return data;
       throw const TmdbException('Unexpected TMDB response');
     } on DioException catch (e) {
+      if (CancelToken.isCancel(e)) rethrow;
       final status = e.response?.statusCode;
       if (status == 401) {
-        throw const TmdbException(
-          'TMDB session expired. Tap Reconnect below to back up your My List & Likes.',
+        throw TmdbException(
+          needsSession
+              ? 'TMDB session expired. Tap Reconnect below to back up your My List & Likes.'
+              : 'TMDB API authentication failed.',
           statusCode: 401,
+          dioType: e.type,
+          cause: e,
         );
       }
       if (status == 429) {
-        throw const TmdbException(
+        throw TmdbException(
           'TMDB rate limit hit. Retrying automatically.',
           statusCode: 429,
+          dioType: e.type,
+          cause: e,
         );
       }
       throw TmdbException(
         e.message ?? 'TMDB request failed',
         statusCode: status,
+        dioType: e.type,
+        cause: e,
       );
     }
   }

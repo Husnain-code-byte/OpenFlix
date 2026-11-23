@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/constants/api_constants.dart';
 import '../../../../core/errors/user_error.dart';
+import '../../../../core/network/network_monitor.dart';
 import '../../../../core/perf/image_perf.dart';
 import '../../../addons/data/stremio_addon_service.dart';
 import '../../../addons/domain/models/addon_models.dart';
@@ -126,13 +130,13 @@ class HomeReady extends HomeState {
   final ManifestModel manifest;
   final List<CatalogItemModel> catalogs;
   final List<MetaModel> hero;
-  final String? addonError;
+  final UserError? addonError;
   final UserError? refreshError;
   final int refreshErrorTick;
 
   HomeReady copyWith({
     List<MetaModel>? hero,
-    String? addonError,
+    UserError? addonError,
     bool clearAddonError = false,
     UserError? refreshError,
     bool clearRefreshError = false,
@@ -168,10 +172,18 @@ class HomeError extends HomeState {
 }
 
 class HomeController extends Notifier<HomeState> {
+  static const String _kHomeCacheKey = 'openflix_home_cache_v1';
+  static const List<Duration> _kColdStartRetryBackoffs = [
+    Duration(milliseconds: 800),
+    Duration(milliseconds: 1500),
+  ];
+
   late AniListAddonRepository _aniListRepo;
   late TmdbRepository _tmdbRepo;
   CancelToken? _cancel;
   Timer? _midnightTimer;
+  StreamSubscription<bool>? _connectivitySub;
+  bool _isLoadingHome = false;
   final Set<String> _inflight = {};
 
   // Hero data accumulates as catalogs resolve (kept out of widget rebuilds)
@@ -263,8 +275,26 @@ class HomeController extends Notifier<HomeState> {
         _syncCustomCatalogs(next.valueOrNull);
       }
     });
+    _connectivitySub?.cancel();
+    _connectivitySub = NetworkMonitor.instance.onConnectivityChanged.listen((online) {
+      if (!online || _isLoadingHome) return;
+      final cur = state;
+      final needsReload = cur is HomeError ||
+          (cur is HomeReady &&
+              (cur.addonError != null ||
+                  (cur.hero.isEmpty &&
+                      ref
+                          .read(shelvesProvider)
+                          .values
+                          .every((s) => s.metas.isEmpty))));
+      if (needsReload) {
+        unawaited(load(isRefresh: false));
+      }
+    });
     ref.onDispose(() {
       _midnightTimer?.cancel();
+      _connectivitySub?.cancel();
+      _connectivitySub = null;
       _cancel?.cancel();
     });
     Future.microtask(load);
@@ -312,9 +342,87 @@ class HomeController extends Notifier<HomeState> {
 
   ShelvesController get _shelves => ref.read(shelvesProvider.notifier);
 
+  Future<bool> _hydrateCachedHomeIfAvailable(
+    ManifestModel resolvedManifest,
+    List<CatalogItemModel> catalogs,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kHomeCacheKey);
+      if (raw == null || raw.trim().isEmpty) return false;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return false;
+      final shelvesMap = decoded['shelves'];
+      if (shelvesMap is! Map) return false;
+
+      final restoredLists = <List<MetaModel>>[];
+      final restoredByKey = <String, List<MetaModel>>{};
+      for (final entry in shelvesMap.entries) {
+        final key = entry.key.toString();
+        final listRaw = entry.value;
+        if (listRaw is! List) continue;
+        final metas = <MetaModel>[];
+        for (final item in listRaw) {
+          if (item is Map) {
+            final parsed = MetaModel.tryParse(Map<String, dynamic>.from(item));
+            if (parsed != null) metas.add(parsed);
+          }
+        }
+        if (metas.isNotEmpty) {
+          restoredByKey[key] = metas;
+          restoredLists.add(metas);
+        }
+      }
+      if (restoredByKey.isEmpty) return false;
+
+      final cachedHero = buildHeroPool(restoredLists, ApiConstants.heroItems);
+      state = HomeReady(
+        manifest: resolvedManifest,
+        catalogs: catalogs,
+        hero: cachedHero,
+      );
+      _shelves.init(catalogs, keepContent: false);
+      for (final entry in restoredByKey.entries) {
+        _shelves.patch(
+          entry.key,
+          (s) => s.copyWith(status: ShelfStatus.loaded, metas: entry.value),
+        );
+      }
+      _syncCustomCatalogs(
+        ref.read(addonsControllerProvider).valueOrNull,
+        resetStatus: false,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('[HomeController] Cache hydrate ignored: $e');
+      return false;
+    }
+  }
+
+  Future<void> _persistHomeCache(List<CatalogItemModel> batch) async {
+    try {
+      final shelvesState = ref.read(shelvesProvider);
+      final serialized = <String, List<Map<String, dynamic>>>{};
+      for (final c in batch) {
+        final metas = shelvesState[c.key]?.metas;
+        if (metas != null && metas.isNotEmpty) {
+          serialized[c.key] = metas.take(16).map((m) => m.toJson()).toList();
+        }
+      }
+      if (serialized.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _kHomeCacheKey,
+        jsonEncode({'shelves': serialized}),
+      );
+    } catch (_) {}
+  }
+
   Future<void> load({bool isRefresh = false}) async {
+    _isLoadingHome = true;
     _cancel?.cancel();
-    _cancel = CancelToken();
+    final token = CancelToken();
+    _cancel = token;
     _inflight.clear();
     _heroLists.clear();
     _loadedDayKey = _currentDayKey();
@@ -330,8 +438,8 @@ class HomeController extends Notifier<HomeState> {
 
     try {
       final standardCatalogs = _tmdbRepo.getStandardCatalogs();
-      final aniListManifest = await _aniListRepo.fetchManifest(cancelToken: _cancel);
-      final categoryCatalogs = await _tmdbRepo.fetchCategoryCatalogs(cancelToken: _cancel);
+      final aniListManifest = await _aniListRepo.fetchManifest(cancelToken: token);
+      final categoryCatalogs = await _tmdbRepo.fetchCategoryCatalogs(cancelToken: token);
       final aniListCatalogs = aniListManifest.catalogs.where((c) => !c.hasRequiredExtra).toList();
       final catalogs = [...standardCatalogs, ...aniListCatalogs, ...categoryCatalogs];
 
@@ -342,6 +450,7 @@ class HomeController extends Notifier<HomeState> {
         catalogs: standardCatalogs,
       );
 
+      var hasHydratedCache = false;
       if (isRefresh && state is HomeReady) {
         final cur = state as HomeReady;
         state = HomeReady(
@@ -349,37 +458,72 @@ class HomeController extends Notifier<HomeState> {
           catalogs: catalogs,
           hero: cur.hero,
         );
-      } else {
-        state = HomeReady(
-          manifest: resolvedManifest,
-          catalogs: catalogs,
-          hero: const [],
+        _shelves.init(catalogs, keepContent: true);
+        _syncCustomCatalogs(
+          ref.read(addonsControllerProvider).valueOrNull,
+          resetStatus: true,
         );
+      } else {
+        // Hydrate cached Home rows immediately on cold launch so the user sees
+        // titles right away instead of blocking on cold TLS/network startup.
+        hasHydratedCache =
+            await _hydrateCachedHomeIfAvailable(resolvedManifest, catalogs);
+        if (!hasHydratedCache) {
+          state = HomeReady(
+            manifest: resolvedManifest,
+            catalogs: catalogs,
+            hero: const [],
+          );
+          _shelves.init(catalogs, keepContent: false);
+          _syncCustomCatalogs(
+            ref.read(addonsControllerProvider).valueOrNull,
+            resetStatus: false,
+          );
+        }
       }
-      _shelves.init(catalogs, keepContent: isRefresh);
-      _syncCustomCatalogs(
-        ref.read(addonsControllerProvider).valueOrNull,
-        resetStatus: isRefresh,
-      );
 
       // First batch concurrently; hero appears as soon as the first list resolves.
       final batch = standardCatalogs.take(ApiConstants.initialCatalogBatch).toList();
 
+      List<List<MetaModel>> lists = const [];
       final batchErrors = <Object>[];
-      final results = await Future.wait(
-        batch.map(
-          (c) => _loadShelf(c).then<List<MetaModel>?>((v) => v).catchError((Object err) {
-            batchErrors.add(err);
-            return null;
-          }),
-        ),
-      );
-      final lists = results.whereType<List<MetaModel>>().toList();
+
+      final maxAttempts =
+          (!isRefresh && !hasHydratedCache) ? (1 + _kColdStartRetryBackoffs.length) : 1;
+
+      for (var attempt = 0; attempt < maxAttempts; attempt++) {
+        if (token.isCancelled) return;
+        if (attempt > 0) {
+          await Future<void>.delayed(_kColdStartRetryBackoffs[attempt - 1]);
+          if (token.isCancelled) return;
+          _inflight.clear();
+          _heroLists.clear();
+          for (final c in batch) {
+            _shelves.patch(c.key, (s) => s.copyWith(status: ShelfStatus.loading));
+          }
+        }
+        batchErrors.clear();
+        final results = await Future.wait(
+          batch.map(
+            (c) => _loadShelf(c).then<List<MetaModel>?>((v) => v).catchError((Object err) {
+              if (err is DioException && CancelToken.isCancel(err)) return null;
+              batchErrors.add(err);
+              return null;
+            }),
+          ),
+        );
+        lists = results.whereType<List<MetaModel>>().where((l) => l.isNotEmpty).toList();
+        if (lists.isNotEmpty) break;
+      }
+
+      if (token.isCancelled) return;
+
       if (standardCatalogs.isNotEmpty && lists.isEmpty) {
+        final isOnline = await NetworkMonitor.instance.checkIsOnline();
         final cur = state;
         final mapped = UserError.from(
-          batchErrors.firstOrNull ?? 'offline',
-          fallbackType: UserErrorType.offline,
+          batchErrors.firstOrNull,
+          isDeviceOffline: !isOnline,
           logTag: 'HomeController.batch',
         );
         if (cur is HomeReady) {
@@ -387,14 +531,15 @@ class HomeController extends Notifier<HomeState> {
               .read(shelvesProvider)
               .values
               .any((s) => s.metas.isNotEmpty);
-          if (isRefresh && (cur.hero.isNotEmpty || hasCachedShelves)) {
+          if ((isRefresh || hasHydratedCache) &&
+              (cur.hero.isNotEmpty || hasCachedShelves)) {
             state = cur.copyWith(
               clearAddonError: true,
               refreshError: mapped,
               refreshErrorTick: cur.refreshErrorTick + 1,
             );
           } else {
-            state = cur.copyWith(addonError: mapped.message);
+            state = cur.copyWith(addonError: mapped);
           }
         }
       } else if (state is HomeReady) {
@@ -402,6 +547,7 @@ class HomeController extends Notifier<HomeState> {
           clearAddonError: true,
           clearRefreshError: true,
         );
+        unawaited(_persistHomeCache(batch));
       }
       _extendHero();
 
@@ -425,12 +571,17 @@ class HomeController extends Notifier<HomeState> {
       }
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) return;
-      final mapped = UserError.from(e, logTag: 'HomeController.load');
+      final isOnline = await NetworkMonitor.instance.checkIsOnline();
+      final mapped = UserError.from(
+        e,
+        isDeviceOffline: !isOnline,
+        logTag: 'HomeController.load',
+      );
       final cur = state;
       final hasCached = cur is HomeReady &&
           (cur.hero.isNotEmpty ||
               ref.read(shelvesProvider).values.any((s) => s.metas.isNotEmpty));
-      if (isRefresh && hasCached) {
+      if (hasCached) {
         state = cur.copyWith(
           refreshError: mapped,
           refreshErrorTick: cur.refreshErrorTick + 1,
@@ -439,12 +590,17 @@ class HomeController extends Notifier<HomeState> {
       }
       state = HomeError(mapped);
     } catch (e) {
-      final mapped = UserError.from(e, logTag: 'HomeController.load');
+      final isOnline = await NetworkMonitor.instance.checkIsOnline();
+      final mapped = UserError.from(
+        e,
+        isDeviceOffline: !isOnline,
+        logTag: 'HomeController.load',
+      );
       final cur = state;
       final hasCached = cur is HomeReady &&
           (cur.hero.isNotEmpty ||
               ref.read(shelvesProvider).values.any((s) => s.metas.isNotEmpty));
-      if (isRefresh && hasCached) {
+      if (hasCached) {
         state = cur.copyWith(
           refreshError: mapped,
           refreshErrorTick: cur.refreshErrorTick + 1,
@@ -452,6 +608,8 @@ class HomeController extends Notifier<HomeState> {
         return;
       }
       state = HomeError(mapped);
+    } finally {
+      _isLoadingHome = false;
     }
   }
 

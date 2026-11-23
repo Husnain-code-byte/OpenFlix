@@ -436,7 +436,7 @@ class _DiscoveryShelvesView extends ConsumerWidget {
       }
       if (!anyPending && !anyLoaded && firstErr != null) {
         return AppStatusCard.fromError(
-          UserError.from(firstErr, fallbackType: UserErrorType.offline),
+          UserError.from(firstErr, logTag: 'SearchScreen.discovery'),
           onAction: homeController.refresh,
         );
       }

@@ -24,7 +24,7 @@
 ## Screenshots
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e" width="13.5%" alt="Home Feed" />
+  <img src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e" width="13.5%" alt="Home OLED UI" />
   <img src="https://github.com/user-attachments/assets/3d153118-90ea-4f25-9d74-e0aa0e592d5d" width="13.5%" alt="Movie Details" />
   <img src="https://github.com/user-attachments/assets/1e64599e-99d2-4619-8f24-2264f8ef2df8" width="13.5%" alt="TV Show Details" />
   <img src="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d" width="13.5%" alt="Curated Rows" />

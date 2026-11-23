@@ -92,25 +92,60 @@
     });
   }
 
-  // 3. Native <dialog> Screenshot Lightbox (with fallback backdrop click)
+  // 3. Native <dialog> Screenshot Lightbox (indexed to DOM sequence with Prev/Next & arrows)
   const lightbox = document.getElementById("lightbox");
   const lbImg = document.getElementById("lb-img");
   const lbCaption = document.getElementById("lightbox-caption");
+  const lbCounter = document.getElementById("lb-counter");
+  const lbPrev = document.getElementById("lb-prev");
+  const lbNext = document.getElementById("lb-next");
+  const shotTriggers = Array.from(document.querySelectorAll(".device-frame"));
+  let activeShotIndex = 0;
 
-  if (lightbox && lbImg) {
-    document.querySelectorAll(".device-frame").forEach((trigger) => {
+  function showLightboxAt(index) {
+    if (!shotTriggers.length || !lbImg) return;
+    activeShotIndex = (index + shotTriggers.length) % shotTriggers.length;
+    const trigger = shotTriggers[activeShotIndex];
+    const src = trigger.dataset.full || "";
+    const caption = trigger.dataset.caption || "OpenFlix App Preview";
+    lbImg.src = src;
+    lbImg.alt = caption;
+    if (lbCaption) lbCaption.textContent = caption;
+    if (lbCounter) {
+      const cur = String(activeShotIndex + 1).padStart(2, "0");
+      const total = String(shotTriggers.length).padStart(2, "0");
+      lbCounter.textContent = `${cur} / ${total}`;
+    }
+  }
+
+  if (lightbox && lbImg && shotTriggers.length) {
+    shotTriggers.forEach((trigger, index) => {
       trigger.addEventListener("click", () => {
-        const src = trigger.dataset.full || "";
-        const caption = trigger.dataset.caption || "OpenFlix App Preview";
-        lbImg.src = src;
-        lbImg.alt = caption;
-        if (lbCaption) lbCaption.textContent = caption;
+        showLightboxAt(index);
         if (typeof lightbox.showModal === "function") {
           lightbox.showModal();
         } else {
           lightbox.setAttribute("open", "");
         }
       });
+    });
+
+    if (lbPrev) {
+      lbPrev.addEventListener("click", () => showLightboxAt(activeShotIndex - 1));
+    }
+    if (lbNext) {
+      lbNext.addEventListener("click", () => showLightboxAt(activeShotIndex + 1));
+    }
+
+    document.addEventListener("keydown", (event) => {
+      if (!lightbox.open) return;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        showLightboxAt(activeShotIndex - 1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        showLightboxAt(activeShotIndex + 1);
+      }
     });
 
     // Fallback light-dismiss for browsers that do not yet support closedby="any"

@@ -45,6 +45,7 @@ Dio buildDio() {
   final dio = Dio(BaseOptions(
     connectTimeout: ApiConstants.connectTimeout,
     receiveTimeout: ApiConstants.receiveTimeout,
+    sendTimeout: ApiConstants.connectTimeout,
     responseType: ResponseType.json,
     headers: const {'Accept': 'application/json'},
   ));

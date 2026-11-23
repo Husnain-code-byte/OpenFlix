@@ -424,7 +424,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         SliverFillRemaining(
           hasScrollBody: false,
           child: AppStatusCard.fromError(
-            UserError.from(s.addonError, fallbackType: UserErrorType.offline),
+            s.addonError!,
             onAction: c.load,
           ),
         ),
@@ -459,7 +459,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           SliverFillRemaining(
             hasScrollBody: false,
             child: AppStatusCard.fromError(
-              UserError.from(firstErr, fallbackType: UserErrorType.offline),
+              UserError.from(firstErr, logTag: 'HomeScreen.shelves'),
               onAction: c.refresh,
             ),
           ),

@@ -1,7 +1,12 @@
 package com.example.pixel
 
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.core.content.FileProvider
 import com.example.pixel.cloudstream.CloudStreamChannelHandler
@@ -14,9 +19,12 @@ import java.io.File
 class MainActivity : FlutterActivity() {
     companion object {
         private const val LAUNCHER_CHANNEL = "openflix/launcher"
+        private const val CONNECTIVITY_CHANNEL = "openflix/connectivity"
     }
 
     private var launcherChannel: MethodChannel? = null
+    private var connectivityChannel: MethodChannel? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingDeepLink: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,6 +40,74 @@ class MainActivity : FlutterActivity() {
     override fun onPause() {
         CommonActivity.setActivityInstance(null)
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        unregisterConnectivityCallback()
+        super.onDestroy()
+    }
+
+    private fun hasActiveInternetInterface(): Boolean {
+        val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return true
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val active = cm.activeNetwork ?: return false
+                val caps = cm.getNetworkCapabilities(active) ?: return false
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))
+            } else {
+                @Suppress("DEPRECATION")
+                cm.activeNetworkInfo?.isConnected == true
+            }
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    private fun registerConnectivityCallback() {
+        if (networkCallback != null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                runOnUiThread {
+                    connectivityChannel?.invokeMethod("onConnectivityChanged", true)
+                }
+            }
+
+            override fun onLost(network: Network) {
+                runOnUiThread {
+                    val stillOnline = hasActiveInternetInterface()
+                    connectivityChannel?.invokeMethod("onConnectivityChanged", stillOnline)
+                }
+            }
+
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val online = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                runOnUiThread {
+                    connectivityChannel?.invokeMethod("onConnectivityChanged", online)
+                }
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(cb)
+            networkCallback = cb
+        } catch (_: Exception) {
+            networkCallback = null
+        }
+    }
+
+    private fun unregisterConnectivityCallback() {
+        val cb = networkCallback ?: return
+        networkCallback = null
+        try {
+            val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            cm?.unregisterNetworkCallback(cb)
+        } catch (_: Exception) {}
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -54,6 +130,12 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         CloudStreamChannelHandler(applicationContext).registerWith(flutterEngine)
+
+        connectivityChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CONNECTIVITY_CHANNEL,
+        )
+        registerConnectivityCallback()
 
         launcherChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -79,6 +161,7 @@ class MainActivity : FlutterActivity() {
                     }
                     "getFilesDir" -> result.success(applicationContext.filesDir.absolutePath)
                     "getCacheDir" -> result.success(applicationContext.cacheDir.absolutePath)
+                    "hasNetworkConnection" -> result.success(hasActiveInternetInterface())
                     "installApk" -> {
                         val path = call.argument<String>("path")
                         if (path.isNullOrBlank()) {
