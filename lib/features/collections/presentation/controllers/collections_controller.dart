@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/perf/image_perf.dart';
 import '../../../details/data/tmdb_repository.dart';
 import '../../data/collection_models.dart';
@@ -25,23 +26,48 @@ class CollectionsReady extends CollectionsState {
     required this.heroItems,
     required this.collections,
     this.allCollections = const [],
+    this.refreshError,
+    this.refreshErrorTick = 0,
   });
 
   final List<CollectionHeroItem> heroItems;
   final List<PremadeCollectionModel> collections;
   final List<PremadeCollectionModel> allCollections;
+  final UserError? refreshError;
+  final int refreshErrorTick;
+
+  CollectionsReady copyWith({
+    UserError? refreshError,
+    bool clearRefreshError = false,
+    int? refreshErrorTick,
+  }) =>
+      CollectionsReady(
+        heroItems: heroItems,
+        collections: collections,
+        allCollections: allCollections,
+        refreshError:
+            clearRefreshError ? null : (refreshError ?? this.refreshError),
+        refreshErrorTick: refreshErrorTick ?? this.refreshErrorTick,
+      );
 
   @override
-  List<Object?> get props => [heroItems, collections, allCollections];
+  List<Object?> get props => [
+        heroItems,
+        collections,
+        allCollections,
+        refreshError,
+        refreshErrorTick,
+      ];
 }
 
 class CollectionsError extends CollectionsState {
-  const CollectionsError(this.message);
+  const CollectionsError(this.error);
 
-  final String message;
+  final UserError error;
+  String get message => error.message;
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [error];
 }
 
 class CollectionsController extends Notifier<CollectionsState> {
@@ -118,8 +144,16 @@ class CollectionsController extends Notifier<CollectionsState> {
         allCollections: allCollections,
       );
     } catch (e) {
-      if (isRefresh && state is CollectionsReady) return;
-      state = CollectionsError(e.toString());
+      final mapped = UserError.from(e, logTag: 'CollectionsController.load');
+      final cur = state;
+      if (isRefresh && cur is CollectionsReady) {
+        state = cur.copyWith(
+          refreshError: mapped,
+          refreshErrorTick: cur.refreshErrorTick + 1,
+        );
+        return;
+      }
+      state = CollectionsError(mapped);
     }
   }
 }

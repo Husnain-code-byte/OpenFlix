@@ -6,7 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
+import '../../../addons/presentation/screens/addons_screen.dart';
+import '../../../addons/presentation/widgets/addons_ui_kit.dart';
 import '../../../preferences/domain/models/playback_preferences.dart';
 import '../../../preferences/presentation/controllers/playback_preferences_controller.dart';
 import '../../../preferences/presentation/widgets/language_setup_sheet.dart';
@@ -39,6 +43,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen>
     with WidgetsBindingObserver {
   PlayerSessionController? _controller;
+  Widget? _cachedVideoSurface;
   bool _controlsVisible = true;
   bool _isScrubbing = false;
   double _scrubFraction = 0.0;
@@ -64,10 +69,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _controller ??= PlayerSessionController(
-      ProviderScope.containerOf(context, listen: false),
-      widget.args,
-    );
+    if (_controller == null) {
+      _controller = PlayerSessionController(
+        ProviderScope.containerOf(context, listen: false),
+        widget.args,
+      );
+      // Cache the RepaintBoundary-isolated video surface once so HUD toggles,
+      // 60fps seekbar scrubbing, and double-tap feedback never trigger rebuilds
+      // or compositor repaints of the native Android video Texture layer.
+      _cachedVideoSurface = RepaintBoundary(
+        child: _IsolatedVideoSurface(controller: _controller!),
+      );
+    }
   }
 
   Future<void> _enterLandscapePlayerMode() async {
@@ -96,6 +109,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       ctrl.flushProgress();
+    } else if (state == AppLifecycleState.resumed) {
+      ctrl.onAppResumed();
+      unawaited(_enterLandscapePlayerMode());
     }
   }
 
@@ -188,8 +204,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         body: Stack(
           fit: StackFit.expand,
           children: [
-            // ── Video Surface (Isolated — rebuilds ONLY on fitMode changes) ──
-            _IsolatedVideoSurface(controller: ctrl),
+            // ── Video Surface (Cached + RepaintBoundary isolated from HUD) ──
+            _cachedVideoSurface!,
 
             // ── Full-screen Gesture Layer (Tap, Double-tap ±10s, Pinch Fit/Fill) ──
             Positioned.fill(
@@ -317,36 +333,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                         isScrubbing: _isScrubbing,
                       ),
 
-                    // Transient status toast (shows even when HUD is hidden, e.g. pinch zoom)
+                    // Transient OLED status pill (shows even when HUD is hidden, auto-dismisses after 3.5s)
                     if (st.statusBanner != null)
                       Positioned(
                         top: math.max(MediaQuery.viewPaddingOf(context).top, 8.h) +
                             12.h,
-                        left: 0,
-                        right: 0,
+                        left: 16.w,
+                        right: 16.w,
                         child: IgnorePointer(
                           child: Center(
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 14.w,
-                                vertical: 7.h,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xCC13161F),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: const Color(0x2EFFFFFF),
-                                ),
-                              ),
-                              child: Text(
-                                st.statusBanner!,
-                                style: TextStyle(
-                                  fontFamily: 'Inter',
-                                  fontSize: 12.5.sp,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                ),
-                              ),
+                            child: AppStatusPill(
+                              message: st.statusBanner!,
+                              icon: Icons.info_outline_rounded,
                             ),
                           ),
                         ),
@@ -403,8 +401,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         // ── Zone 1: Mathematical Dead-Center Transport / Error ────────────
         Align(
           alignment: Alignment.center,
-          child: st.errorMessage != null
-              ? _buildErrorCard(context, ctrl, st.errorMessage!)
+          child: st.hasError
+              ? _buildErrorCard(context, ctrl, st)
               : _buildTransportControls(ctrl, st, m),
         ),
 
@@ -760,87 +758,36 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Widget _buildErrorCard(
     BuildContext context,
     PlayerSessionController ctrl,
-    String message,
+    PlayerUiState st,
   ) {
-    return Container(
-      constraints: BoxConstraints(maxWidth: 420.w),
-      margin: EdgeInsets.symmetric(horizontal: 24.w),
-      padding: EdgeInsets.all(18.r),
-      decoration: BoxDecoration(
-        color: const Color(0xE613161F),
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: const Color(0x2EFFFFFF)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.error_outline_rounded,
-            size: 26.r,
-            color: const Color(0xFFFF8F95),
-          ),
-          SizedBox(height: 8.h),
-          Text(
-            message,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontFamily: 'Inter',
-              fontSize: 13.sp,
-              color: Colors.white,
-              height: 1.4,
-            ),
-          ),
-          SizedBox(height: 14.h),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ElevatedButton(
-                onPressed: () {
-                  HapticFeedback.lightImpact();
-                  ctrl.retryCurrentOrNext();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-                child: Text(
-                  'Retry',
-                  style: TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 12.5.sp,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              SizedBox(width: 10.w),
-              OutlinedButton(
-                onPressed: () =>
-                    showPlayerLinksModal(context, controller: ctrl),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Color(0x66FFFFFF)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-                child: Text(
-                  'Choose Link',
-                  style: TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 12.5.sp,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+    final err = st.error ??
+        UserError.from(
+          st.errorMessage,
+          fallbackType: UserErrorType.playbackFailed,
+          logTag: 'PlayerScreen',
+        );
+
+    if (err.type == UserErrorType.noAddons) {
+      return AppStatusCard.noAddons(
+        compact: true,
+        onInstallAddons: () {
+          Navigator.of(context).pushReplacement<void, void>(
+            addonsRoute<void>(const AddonsScreen()),
+          );
+        },
+      );
+    }
+
+    final hasLinks = st.rankedStreams.isNotEmpty;
+    return AppStatusCard.fromError(
+      err,
+      compact: true,
+      actionLabelOverride: 'Retry',
+      onAction: () => ctrl.retryCurrentOrNext(),
+      secondaryActionLabel: hasLinks ? 'Switch Link' : null,
+      onSecondaryAction: hasLinks
+          ? () => showPlayerLinksModal(context, controller: ctrl)
+          : null,
     );
   }
 }
@@ -856,6 +803,7 @@ class _IsolatedVideoSurface extends StatefulWidget {
 }
 
 class _IsolatedVideoSurfaceState extends State<_IsolatedVideoSurface> {
+  final _videoKey = GlobalKey();
   late VideoFitMode _fitMode;
   late double _subScale;
 
@@ -897,10 +845,12 @@ class _IsolatedVideoSurfaceState extends State<_IsolatedVideoSurface> {
       VideoFitMode.stretch16x9 => BoxFit.fill,
     };
     final aspect = _fitMode == VideoFitMode.stretch16x9 ? 16 / 9 : null;
-    return ColoredBox(
-      color: const Color(0xFF000000),
-      child: Video(
-        controller: widget.controller.videoController,
+    return RepaintBoundary(
+      child: ColoredBox(
+        color: const Color(0xFF000000),
+        child: Video(
+          key: _videoKey,
+          controller: widget.controller.videoController,
         fit: fit,
         aspectRatio: aspect,
         controls: NoVideoControls,
@@ -919,8 +869,9 @@ class _IsolatedVideoSurfaceState extends State<_IsolatedVideoSurface> {
               Shadow(color: Colors.black, blurRadius: 4),
             ],
           ),
-          textAlign: TextAlign.center,
-          padding: const EdgeInsets.fromLTRB(28, 0, 28, 28),
+            textAlign: TextAlign.center,
+            padding: const EdgeInsets.fromLTRB(28, 0, 28, 28),
+          ),
         ),
       ),
     );

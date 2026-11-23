@@ -7,6 +7,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../details/presentation/widgets/detail_widgets.dart' show DetailBackButton;
 import '../../../home/presentation/widgets/shimmer_loading.dart';
 
@@ -1350,29 +1351,13 @@ void showAddonsToast(
   VoidCallback? onAction,
   bool isError = false,
 }) {
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(
-          message,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: AddonsText.inter(13, weight: FontWeight.w600),
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: isError ? AddonsColors.errorToast : AddonsColors.toast,
-        shape: const StadiumBorder(),
-        duration: const Duration(milliseconds: 3200),
-        action: actionLabel == null
-            ? null
-            : SnackBarAction(
-                label: actionLabel,
-                textColor: AddonsColors.textPrimary,
-                onPressed: onAction ?? () {},
-              ),
-      ),
-    );
+  AppToast.show(
+    context,
+    message: message,
+    isError: isError,
+    actionLabel: actionLabel,
+    onAction: onAction,
+  );
 }
 
 /// Route used by every Addons push: fade + 2% rise on the app curve.

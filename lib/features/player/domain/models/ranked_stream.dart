@@ -123,6 +123,7 @@ bool isDurationCompatibleWithRuntime(
 class StreamProbeResult extends Equatable {
   const StreamProbeResult({
     required this.isAlive,
+    this.isInconclusive = false,
     this.statusCode,
     this.ttfbMs,
     this.estimatedMbps,
@@ -134,6 +135,7 @@ class StreamProbeResult extends Equatable {
   });
 
   final bool isAlive;
+  final bool isInconclusive;
   final int? statusCode;
   final int? ttfbMs;
   final double? estimatedMbps;
@@ -146,6 +148,7 @@ class StreamProbeResult extends Equatable {
   @override
   List<Object?> get props => [
         isAlive,
+        isInconclusive,
         statusCode,
         ttfbMs,
         estimatedMbps,
@@ -166,6 +169,7 @@ class ParsedStreamMetadata extends Equatable {
     this.resolutionHeight = 0,
     this.isAdaptiveMaster = false,
     this.hdrFormat = HdrFormat.none,
+    this.isDolbyVisionProfile5Only = false,
     this.videoCodec = VideoCodecHint.unknown,
     this.audioCodec = AudioCodecHint.unknown,
     this.audioChannels,
@@ -179,6 +183,7 @@ class ParsedStreamMetadata extends Equatable {
   final int resolutionHeight;
   final bool isAdaptiveMaster;
   final HdrFormat hdrFormat;
+  final bool isDolbyVisionProfile5Only;
   final VideoCodecHint videoCodec;
   final AudioCodecHint audioCodec;
   final String? audioChannels;
@@ -204,6 +209,7 @@ class ParsedStreamMetadata extends Equatable {
         resolutionHeight,
         isAdaptiveMaster,
         hdrFormat,
+        isDolbyVisionProfile5Only,
         videoCodec,
         audioCodec,
         audioChannels,
@@ -248,7 +254,7 @@ class RankedStream extends Equatable {
 
   String? get speedLabel {
     final p = probe;
-    if (p == null || !p.isAlive) return null;
+    if (p == null || !p.isAlive || p.isInconclusive) return null;
     if (p.estimatedMbps != null && p.estimatedMbps! >= 0.5) {
       return '${p.estimatedMbps!.toStringAsFixed(1)} Mbps';
     }

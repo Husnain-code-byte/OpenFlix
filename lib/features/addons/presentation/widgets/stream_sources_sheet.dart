@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/user_error.dart';
+import '../../../../core/widgets/app_feedback.dart';
+import '../../../player/domain/models/player_models.dart';
+import '../../../player/presentation/screens/player_screen.dart';
 import '../../domain/models/addon_models.dart';
 import '../../domain/models/stream_models.dart';
 import '../controllers/addons_controller.dart';
@@ -67,6 +71,20 @@ class _StreamSourcesSheetState extends ConsumerState<_StreamSourcesSheet> {
     showAddonsToast(
       context,
       isMagnet ? 'Magnet URI copied to clipboard' : 'Stream URL copied',
+    );
+  }
+
+  void _playInternally(ResolvedStream stream) {
+    addonHaptic(AddonHaptic.light);
+    final nav = Navigator.of(context);
+    nav.pop();
+    nav.push<void>(
+      openFlixPlayerRoute(
+        PlaybackLaunchArgs(
+          query: widget.query,
+          initialStream: stream,
+        ),
+      ),
     );
   }
 
@@ -173,15 +191,9 @@ class _StreamSourcesSheetState extends ConsumerState<_StreamSourcesSheet> {
       ),
       body: !hasAnySource
           ? Padding(
-              padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
-              child: AddonsStateCard(
-                iconSvg: AddonIcons.play,
-                title: 'No Stream Addons Installed',
-                body:
-                    'OpenFlix keeps third-party addons disabled by default for your safety. Add a Stremio stream manifest or CloudStream .cs3 extension in Addons to fetch playable links.',
-                actionLabel: 'Open Addons',
-                actionIconSvg: AddonIcons.puzzle,
-                onAction: _openAddonsScreen,
+              padding: const EdgeInsets.fromLTRB(4, 12, 4, 24),
+              child: AppStatusCard.noAddons(
+                onInstallAddons: _openAddonsScreen,
               ),
             )
           : Column(
@@ -215,8 +227,8 @@ class _StreamSourcesSheetState extends ConsumerState<_StreamSourcesSheet> {
                 Expanded(
                   child: Text(
                     resolverState.subtitles.isEmpty
-                        ? 'Player coming next · Tap Copy Link or Open to verify streams.'
-                        : '${resolverState.subtitles.length} subtitle track${resolverState.subtitles.length == 1 ? '' : 's'} matched · Player coming next.',
+                        ? 'Tap any playable stream to watch in OpenFlix player.'
+                        : '${resolverState.subtitles.length} subtitle track${resolverState.subtitles.length == 1 ? '' : 's'} matched · Tap Play to watch in OpenFlix.',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: AddonsText.inter(
@@ -256,19 +268,17 @@ class _StreamSourcesSheetState extends ConsumerState<_StreamSourcesSheet> {
     }
 
     if (!resolverState.isResolving && resolverState.streams.isEmpty) {
+      final err = resolverState.error != null
+          ? UserError.from(
+              resolverState.error,
+              fallbackType: UserErrorType.noStreams,
+              logTag: 'StreamSourcesSheet',
+            )
+          : UserError.noStreams();
       return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-        child: AddonsStateCard(
-          tone: resolverState.error != null
-              ? AddonStateTone.error
-              : AddonStateTone.neutral,
-          iconSvg:
-              resolverState.error != null ? AddonIcons.alert : AddonIcons.search,
-          title: 'No Streams Returned',
-          body: resolverState.error ??
-              'None of your active Stremio stream addons or .cs3 providers returned a matching link for "${widget.query.title}".',
-          actionLabel: 'Retry Search',
-          actionIconSvg: AddonIcons.refresh,
+        padding: const EdgeInsets.fromLTRB(4, 12, 4, 16),
+        child: AppStatusCard.fromError(
+          err,
           onAction: () => _resolver.resolve(widget.query),
         ),
       );
@@ -287,6 +297,9 @@ class _StreamSourcesSheetState extends ConsumerState<_StreamSourcesSheet> {
             target,
             isMagnet: stream.transport == StreamTransport.torrent,
           ),
+          onPlayInternal: stream.canPlayInternally
+              ? () => _playInternally(stream)
+              : null,
           onOpenExternal: _openExternally,
         );
       },
@@ -375,17 +388,20 @@ class _ResolvedStreamCard extends StatelessWidget {
     required this.stream,
     required this.globalSubtitlesCount,
     required this.onCopy,
+    required this.onPlayInternal,
     required this.onOpenExternal,
   });
 
   final ResolvedStream stream;
   final int globalSubtitlesCount;
   final ValueChanged<String> onCopy;
+  final VoidCallback? onPlayInternal;
   final ValueChanged<String> onOpenExternal;
 
   @override
   Widget build(BuildContext context) {
     final target = stream.playableOrCopyableTarget;
+    final canPlayInternal = onPlayInternal != null && stream.canPlayInternally;
     final hasHeaders = stream.headers.isNotEmpty ||
         (stream.referer != null && stream.referer!.isNotEmpty);
     final sizeLabel = stream.formattedSize;
@@ -393,121 +409,133 @@ class _ResolvedStreamCard extends StatelessWidget {
         ? stream.subtitles.length
         : globalSubtitlesCount;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AddonsColors.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: stream.transport.isPlayableDirect
-              ? AddonsColors.hairlineStrong
-              : AddonsColors.hairline,
+    return GestureDetector(
+      onTap: canPlayInternal ? onPlayInternal : null,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AddonsColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: canPlayInternal
+                ? AddonsColors.hairlineStrong
+                : AddonsColors.hairline,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Wrap(
-            spacing: 6,
-            runSpacing: 5,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (stream.qualityLabel != null && stream.qualityLabel!.isNotEmpty)
-                AddonBadge(
-                  stream.qualityLabel!,
-                  tone: stream.qualityRank >= 1080
-                      ? AddonBadgeTone.live
-                      : AddonBadgeTone.caution,
-                ),
-              AddonBadge(
-                stream.transport.badgeLabel,
-                tone: stream.transport.isPlayableDirect
-                    ? AddonBadgeTone.live
-                    : (stream.transport == StreamTransport.torrent
-                        ? AddonBadgeTone.caution
-                        : AddonBadgeTone.neutral),
-              ),
-              AddonBadge(
-                stream.architecture == AddonArchitecture.cloudstream
-                    ? 'CS3 · ${stream.providerName}'
-                    : stream.providerName,
-              ),
-              if (sizeLabel != null)
-                Text(
-                  sizeLabel,
-                  style: AddonsText.inter(
-                    10.5,
-                    color: AddonsColors.textMuted,
-                    tabular: true,
-                  ),
-                ),
-              if (subsCount > 0)
-                AddonTag(
-                  '$subsCount subs',
-                  iconSvg: AddonIcons.subtitles,
-                  dense: true,
-                ),
-              if (hasHeaders) const AddonTag('Headers', dense: true),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            stream.title.isNotEmpty ? stream.title : stream.addonName,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: AddonsText.inter(
-              13.5,
-              weight: FontWeight.w700,
-              height: 1.3,
-            ),
-          ),
-          if ((stream.description != null && stream.description!.isNotEmpty) ||
-              (stream.filename != null && stream.filename!.isNotEmpty)) ...[
-            const SizedBox(height: 4),
-            Text(
-              stream.description?.isNotEmpty == true
-                  ? stream.description!
-                  : stream.filename!,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: AddonsText.inter(
-                11.5,
-                color: AddonsColors.textMuted,
-                height: 1.4,
-              ),
-            ),
-          ],
-          if (target != null) ...[
-            const SizedBox(height: 12),
-            Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 6,
+              runSpacing: 5,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Expanded(
-                  child: AddonsButton(
-                    label: stream.transport == StreamTransport.torrent
-                        ? 'Copy Magnet'
-                        : 'Copy Link',
-                    iconSvg: AddonIcons.copy,
-                    variant: AddonButtonVariant.secondary,
-                    height: 34,
-                    compact: true,
-                    onTap: () => onCopy(target),
+                if (stream.qualityLabel != null && stream.qualityLabel!.isNotEmpty)
+                  AddonBadge(
+                    stream.qualityLabel!,
+                    tone: stream.qualityRank >= 1080
+                        ? AddonBadgeTone.live
+                        : AddonBadgeTone.caution,
                   ),
+                AddonBadge(
+                  stream.transport.badgeLabel,
+                  tone: canPlayInternal
+                      ? AddonBadgeTone.live
+                      : (stream.transport == StreamTransport.torrent
+                          ? AddonBadgeTone.caution
+                          : AddonBadgeTone.neutral),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: AddonsButton(
-                    label: 'Open Externally',
-                    iconSvg: AddonIcons.globe,
-                    variant: AddonButtonVariant.primary,
-                    height: 34,
-                    compact: true,
-                    onTap: () => onOpenExternal(target),
+                AddonBadge(
+                  stream.architecture == AddonArchitecture.cloudstream
+                      ? 'CS3 · ${stream.providerName}'
+                      : stream.providerName,
+                ),
+                if (sizeLabel != null)
+                  Text(
+                    sizeLabel,
+                    style: AddonsText.inter(
+                      10.5,
+                      color: AddonsColors.textMuted,
+                      tabular: true,
+                    ),
                   ),
-                ),
+                if (subsCount > 0)
+                  AddonTag(
+                    '$subsCount subs',
+                    iconSvg: AddonIcons.subtitles,
+                    dense: true,
+                  ),
+                if (hasHeaders) const AddonTag('Headers', dense: true),
               ],
             ),
+            const SizedBox(height: 8),
+            Text(
+              stream.title.isNotEmpty ? stream.title : stream.addonName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AddonsText.inter(
+                13.5,
+                weight: FontWeight.w700,
+                height: 1.3,
+              ),
+            ),
+            if ((stream.description != null && stream.description!.isNotEmpty) ||
+                (stream.filename != null && stream.filename!.isNotEmpty)) ...[
+              const SizedBox(height: 4),
+              Text(
+                stream.description?.isNotEmpty == true
+                    ? stream.description!
+                    : stream.filename!,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: AddonsText.inter(
+                  11.5,
+                  color: AddonsColors.textMuted,
+                  height: 1.4,
+                ),
+              ),
+            ],
+            if (target != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: AddonsButton(
+                      label: stream.transport == StreamTransport.torrent
+                          ? 'Copy Magnet'
+                          : 'Copy Link',
+                      iconSvg: AddonIcons.copy,
+                      variant: AddonButtonVariant.secondary,
+                      height: 34,
+                      compact: true,
+                      onTap: () => onCopy(target),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: canPlayInternal
+                        ? AddonsButton(
+                            label: 'Play',
+                            iconSvg: AddonIcons.play,
+                            variant: AddonButtonVariant.primary,
+                            height: 34,
+                            compact: true,
+                            onTap: onPlayInternal!,
+                          )
+                        : AddonsButton(
+                            label: 'Open Externally',
+                            iconSvg: AddonIcons.globe,
+                            variant: AddonButtonVariant.primary,
+                            height: 34,
+                            compact: true,
+                            onTap: () => onOpenExternal(target),
+                          ),
+                  ),
+                ],
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

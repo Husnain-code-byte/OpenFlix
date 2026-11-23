@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../home/data/models/manifest_model.dart';
 import '../../../home/presentation/widgets/pixel_bottom_nav.dart';
 import '../../data/official_addons_registry.dart';
@@ -138,9 +140,12 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       );
     } catch (e) {
       if (mounted) {
+        final mapped = UserError.from(e, logTag: 'AddonsScreen.deepLink');
         showAddonsToast(
           context,
-          'Could not load configured manifest: ${e.toString().replaceFirst('Exception: ', '')}',
+          mapped.type == UserErrorType.offline
+              ? mapped.title
+              : "Couldn't load that addon link. Please try again.",
           isError: true,
         );
       }
@@ -276,14 +281,12 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      final mapped = UserError.from(e, logTag: 'AddonsScreen.composer');
       addonHaptic(AddonHaptic.medium);
       setState(() {
         _composerPhase = AddonButtonPhase.idle;
         _composerShakeTrigger++;
-        _composerErrorText = e
-            .toString()
-            .replaceFirst('Exception: ', '')
-            .replaceFirst('FormatException: ', '');
+        _composerErrorText = mapped.message;
       });
     }
   }
@@ -377,7 +380,7 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
     if (!opened) {
       showAddonsToast(
         context,
-        'Could not open browser for $configureUrl',
+        "Couldn't open your browser right now.",
         isError: true,
       );
     }
@@ -394,9 +397,12 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final mapped = UserError.from(e, logTag: 'AddonsScreen.refresh');
         showAddonsToast(
           context,
-          'Refresh failed: ${e.toString().replaceFirst('Exception: ', '')}',
+          mapped.type == UserErrorType.offline
+              ? mapped.title
+              : "Couldn't refresh ${addon.manifest.name}.",
           isError: true,
         );
       }
@@ -485,9 +491,12 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       }
     } catch (e) {
       if (!mounted) return;
+      final mapped = UserError.from(e, logTag: 'AddonsScreen.installCs3');
       showAddonsToast(
         context,
-        'Could not install ${entry.name}: ${e.toString().replaceFirst('Exception: ', '')}',
+        mapped.type == UserErrorType.offline
+            ? mapped.title
+            : "Couldn't install ${entry.name}. Please try again.",
         isError: true,
       );
     }
@@ -525,9 +534,12 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final mapped = UserError.from(e, logTag: 'AddonsScreen.installStremio');
         showAddonsToast(
           context,
-          'Could not load ${entry.name}: ${e.toString().replaceFirst('Exception: ', '')}',
+          mapped.type == UserErrorType.offline
+              ? mapped.title
+              : "Couldn't load ${entry.name}. Please try again.",
           isError: true,
         );
       }
@@ -628,16 +640,9 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
                   error: (err, _) => Padding(
                     key: const ValueKey('error'),
                     padding: const EdgeInsets.all(20),
-                    child: Center(
-                      child: AddonsStateCard(
-                        tone: AddonStateTone.error,
-                        iconSvg: AddonIcons.alert,
-                        title: 'Could Not Load Addons Store',
-                        body: err.toString().replaceFirst('Exception: ', ''),
-                        actionLabel: 'Retry',
-                        actionIconSvg: AddonIcons.refresh,
-                        onAction: () => ref.invalidate(addonsControllerProvider),
-                      ),
+                    child: AppStatusCard.fromError(
+                      UserError.from(err, logTag: 'AddonsScreen.store'),
+                      onAction: () => ref.invalidate(addonsControllerProvider),
                     ),
                   ),
                   data: (store) => _buildContent(context, store),

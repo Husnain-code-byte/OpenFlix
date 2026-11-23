@@ -100,5 +100,22 @@ void main() {
       expect(pickEn.isOff, isFalse);
       expect(pickEn.isExternal, isFalse); // embedded preferred over external
     });
+
+    test('exposes SRT, ASS/SSA, PGS, and VobSub embedded tracks cleanly', () {
+      final opts = TrackOrchestrator.buildSubtitleOptions(
+        [
+          const SubtitleTrack('1', 'English', 'eng', codec: 'subrip'),
+          const SubtitleTrack('2', 'Anime Signs', 'eng', codec: 'ass'),
+          const SubtitleTrack('3', 'BluRay', 'eng', codec: 'hdmv_pgs_subtitle'),
+          const SubtitleTrack('4', 'DVD', 'eng', codec: 'dvd_subtitle'),
+        ],
+        const [],
+      );
+      final details = opts.map((o) => o.detail ?? '').toList();
+      expect(details.any((d) => d.contains('SRT')), isTrue);
+      expect(details.any((d) => d.contains('ASS')), isTrue);
+      expect(details.any((d) => d.contains('PGS')), isTrue);
+      expect(details.any((d) => d.contains('VobSub')), isTrue);
+    });
   });
 }

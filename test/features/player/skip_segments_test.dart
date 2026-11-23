@@ -74,6 +74,61 @@ void main() {
       expect(segments[2].type, SkipSegmentType.outro);
       expect(segments[2].startMs, 1342795);
     });
+
+    test('rejects AniSkip items whose episodeLength mismatches actual video duration', () {
+      final json = {
+        'found': true,
+        'results': [
+          {
+            'skipType': 'op',
+            'episodeLength': 1420.0,
+            'interval': {'startTime': 60.0, 'endTime': 150.0},
+          },
+          {
+            'skipType': 'ed',
+            'episodeLength': 1350.0,
+            'interval': {'startTime': 1250.0, 'endTime': 1340.0},
+          },
+        ],
+      };
+
+      final matched = AniSkipClient.parseResponse(json, actualDurationSec: 1425);
+      expect(matched.length, 1);
+      expect(matched.first.type, SkipSegmentType.intro);
+    });
+  });
+
+  group('SkipSegment prompt lead-in window', () {
+    test('intro prompt appears 3.5s before intro.start through intro.end', () {
+      const intro = SkipSegment(
+        type: SkipSegmentType.intro,
+        startMs: 60000,
+        endMs: 150000,
+        source: SkipSegmentSource.aniSkip,
+      );
+
+      expect(intro.isPromptActiveAt(56499), isFalse);
+      expect(intro.isPromptActiveAt(56500), isTrue);
+      expect(intro.isPromptActiveAt(60000), isTrue);
+      expect(intro.isPromptActiveAt(149999), isTrue);
+      expect(intro.isPromptActiveAt(150000), isFalse);
+      // Auto-skip check does not trigger early during the 3.5s lead-in.
+      expect(intro.isActiveAt(58000), isFalse);
+      expect(intro.isActiveAt(60000), isTrue);
+    });
+
+    test('clamps intro lead-in at 0 when intro starts within 3.5s', () {
+      const intro = SkipSegment(
+        type: SkipSegmentType.intro,
+        startMs: 2000,
+        endMs: 92000,
+        source: SkipSegmentSource.embeddedChapters,
+      );
+
+      expect(intro.isPromptActiveAt(0), isTrue);
+      expect(intro.isPromptActiveAt(91999), isTrue);
+      expect(intro.isPromptActiveAt(92000), isFalse);
+    });
   });
 
   group('MpvChapterParser.parse', () {
@@ -151,6 +206,37 @@ void main() {
       expect(merged[0].startMs, 50000);
       expect(merged[1].type, SkipSegmentType.outro);
       expect(merged[1].source, SkipSegmentSource.introDb);
+    });
+
+    test('rejects bogus/out-of-bounds anime intro & outro ranges', () {
+      const tooLongAnimeIntro = SkipSegment(
+        type: SkipSegmentType.intro,
+        startMs: 0,
+        endMs: 400000, // 6m40s — bogus for anime OP
+        source: SkipSegmentSource.aniSkip,
+      );
+      const tooEarlyOutro = SkipSegment(
+        type: SkipSegmentType.outro,
+        startMs: 300000, // 20% into episode — bogus outro
+        endMs: 390000,
+        source: SkipSegmentSource.aniSkip,
+      );
+      const validOutro = SkipSegment(
+        type: SkipSegmentType.outro,
+        startMs: 1320000,
+        endMs: 1410000,
+        source: SkipSegmentSource.embeddedChapters,
+      );
+
+      final merged = SkipSegmentsRepository.mergeAndSanitize(
+        embedded: const [validOutro],
+        online: const [tooLongAnimeIntro, tooEarlyOutro],
+        durationMs: 1440000,
+        isAnime: true,
+      );
+
+      expect(merged.length, 1);
+      expect(merged.first.type, SkipSegmentType.outro);
     });
   });
 

@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../addons/domain/models/stream_models.dart';
 import '../../../details/data/tmdb_models.dart';
 import 'ranked_stream.dart';
@@ -68,6 +69,7 @@ class PlayerSubtitleOption extends Equatable {
 class PlaybackLaunchArgs extends Equatable {
   const PlaybackLaunchArgs({
     required this.query,
+    this.initialStream,
     this.initialPositionMs = 0,
     this.seasons = const [],
     this.seasonsCache = const {},
@@ -81,6 +83,7 @@ class PlaybackLaunchArgs extends Equatable {
   });
 
   final StreamQuery query;
+  final ResolvedStream? initialStream;
   final int initialPositionMs;
   final List<TmdbSeasonSummary> seasons;
   final Map<int, TmdbSeasonDetails> seasonsCache;
@@ -95,6 +98,7 @@ class PlaybackLaunchArgs extends Equatable {
   @override
   List<Object?> get props => [
         query,
+        initialStream,
         initialPositionMs,
         seasons,
         posterUrl,
@@ -139,6 +143,7 @@ class PlayerUiState extends Equatable {
     this.isInitializing = true,
     this.isResolvingLinks = true,
     this.hasMoreSources = false,
+    this.hasAnyStreamAddon = true,
     this.isSwitchingSource = false,
     this.isBuffering = false,
     this.isPlaying = false,
@@ -153,6 +158,7 @@ class PlayerUiState extends Equatable {
     this.selectedAudioId,
     this.subtitleOptions = const [],
     this.selectedSubtitleId = 'off',
+    this.error,
     this.errorMessage,
     this.statusBanner,
     this.nextEpisodeQuery,
@@ -163,6 +169,7 @@ class PlayerUiState extends Equatable {
   final bool isInitializing;
   final bool isResolvingLinks;
   final bool hasMoreSources;
+  final bool hasAnyStreamAddon;
   final bool isSwitchingSource;
   final bool isBuffering;
   final bool isPlaying;
@@ -177,16 +184,20 @@ class PlayerUiState extends Equatable {
   final String? selectedAudioId;
   final List<PlayerSubtitleOption> subtitleOptions;
   final String selectedSubtitleId;
+  final UserError? error;
   final String? errorMessage;
   final String? statusBanner;
   final StreamQuery? nextEpisodeQuery;
   final bool showNextEpisodePrompt;
+
+  bool get hasError => error != null || errorMessage != null;
 
   PlayerUiState copyWith({
     StreamQuery? query,
     bool? isInitializing,
     bool? isResolvingLinks,
     bool? hasMoreSources,
+    bool? hasAnyStreamAddon,
     bool? isSwitchingSource,
     bool? isBuffering,
     bool? isPlaying,
@@ -201,6 +212,7 @@ class PlayerUiState extends Equatable {
     String? selectedAudioId,
     List<PlayerSubtitleOption>? subtitleOptions,
     String? selectedSubtitleId,
+    UserError? error,
     String? errorMessage,
     bool clearError = false,
     String? statusBanner,
@@ -208,35 +220,42 @@ class PlayerUiState extends Equatable {
     StreamQuery? nextEpisodeQuery,
     bool clearNextEpisode = false,
     bool? showNextEpisodePrompt,
-  }) =>
-      PlayerUiState(
-        query: query ?? this.query,
-        isInitializing: isInitializing ?? this.isInitializing,
-        isResolvingLinks: isResolvingLinks ?? this.isResolvingLinks,
-        hasMoreSources: hasMoreSources ?? this.hasMoreSources,
-        isSwitchingSource: isSwitchingSource ?? this.isSwitchingSource,
-        isBuffering: isBuffering ?? this.isBuffering,
-        isPlaying: isPlaying ?? this.isPlaying,
-        position: position ?? this.position,
-        duration: duration ?? this.duration,
-        buffered: buffered ?? this.buffered,
-        playbackSpeed: playbackSpeed ?? this.playbackSpeed,
-        fitMode: fitMode ?? this.fitMode,
-        activeStream: activeStream ?? this.activeStream,
-        rankedStreams: rankedStreams ?? this.rankedStreams,
-        audioOptions: audioOptions ?? this.audioOptions,
-        selectedAudioId: selectedAudioId ?? this.selectedAudioId,
-        subtitleOptions: subtitleOptions ?? this.subtitleOptions,
-        selectedSubtitleId: selectedSubtitleId ?? this.selectedSubtitleId,
-        errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
-        statusBanner:
-            clearStatusBanner ? null : (statusBanner ?? this.statusBanner),
-        nextEpisodeQuery: clearNextEpisode
-            ? null
-            : (nextEpisodeQuery ?? this.nextEpisodeQuery),
-        showNextEpisodePrompt:
-            showNextEpisodePrompt ?? this.showNextEpisodePrompt,
-      );
+  }) {
+    final nextError = clearError ? null : (error ?? this.error);
+    final nextErrorMsg = clearError
+        ? null
+        : (errorMessage ?? error?.message ?? this.errorMessage);
+    return PlayerUiState(
+      query: query ?? this.query,
+      isInitializing: isInitializing ?? this.isInitializing,
+      isResolvingLinks: isResolvingLinks ?? this.isResolvingLinks,
+      hasMoreSources: hasMoreSources ?? this.hasMoreSources,
+      hasAnyStreamAddon: hasAnyStreamAddon ?? this.hasAnyStreamAddon,
+      isSwitchingSource: isSwitchingSource ?? this.isSwitchingSource,
+      isBuffering: isBuffering ?? this.isBuffering,
+      isPlaying: isPlaying ?? this.isPlaying,
+      position: position ?? this.position,
+      duration: duration ?? this.duration,
+      buffered: buffered ?? this.buffered,
+      playbackSpeed: playbackSpeed ?? this.playbackSpeed,
+      fitMode: fitMode ?? this.fitMode,
+      activeStream: activeStream ?? this.activeStream,
+      rankedStreams: rankedStreams ?? this.rankedStreams,
+      audioOptions: audioOptions ?? this.audioOptions,
+      selectedAudioId: selectedAudioId ?? this.selectedAudioId,
+      subtitleOptions: subtitleOptions ?? this.subtitleOptions,
+      selectedSubtitleId: selectedSubtitleId ?? this.selectedSubtitleId,
+      error: nextError,
+      errorMessage: nextErrorMsg,
+      statusBanner:
+          clearStatusBanner ? null : (statusBanner ?? this.statusBanner),
+      nextEpisodeQuery: clearNextEpisode
+          ? null
+          : (nextEpisodeQuery ?? this.nextEpisodeQuery),
+      showNextEpisodePrompt:
+          showNextEpisodePrompt ?? this.showNextEpisodePrompt,
+    );
+  }
 
   @override
   List<Object?> get props => [
@@ -244,6 +263,7 @@ class PlayerUiState extends Equatable {
         isInitializing,
         isResolvingLinks,
         hasMoreSources,
+        hasAnyStreamAddon,
         isSwitchingSource,
         isBuffering,
         isPlaying,
@@ -258,6 +278,7 @@ class PlayerUiState extends Equatable {
         selectedAudioId,
         subtitleOptions,
         selectedSubtitleId,
+        error,
         errorMessage,
         statusBanner,
         nextEpisodeQuery,

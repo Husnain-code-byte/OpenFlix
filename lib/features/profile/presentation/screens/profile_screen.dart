@@ -6,9 +6,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/constants/app_links.dart';
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/services/update_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../addons/presentation/controllers/addons_controller.dart';
 import '../../../addons/presentation/screens/addons_screen.dart';
 import '../../../addons/presentation/widgets/addons_ui_kit.dart';
@@ -70,7 +72,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   TmdbRepository? _repo;
-  String _installedVersion = '1.0.0';
+  String _installedVersion = '1.1.0';
   bool _isCheckingUpdate = false;
   String? _updateStatusMessage;
   bool _updateStatusIsError = false;
@@ -105,22 +107,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       launched = false;
     }
     if (!launched && mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              'Unable to open Discord link right now',
-              style: GoogleFonts.inter(
-                fontSize: 13.sp,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF3A1419),
-          ),
-        );
+      AppToast.show(
+        context,
+        message: "Couldn't open Discord right now.",
+        isError: true,
+      );
     }
   }
 
@@ -149,29 +140,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     final isErr = result.status == UpdateCheckStatus.error;
     final msg =
-        isErr ? 'Unable to check right now' : "You're on the latest version";
+        isErr ? "Couldn't check for updates right now." : "You're on the latest version";
     setState(() {
       _updateStatusMessage = msg;
       _updateStatusIsError = isErr;
     });
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            msg,
-            style: GoogleFonts.inter(
-              fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
-          ),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor:
-              isErr ? const Color(0xFF3A1419) : const Color(0xFF181B26),
-        ),
-      );
+    AppToast.show(
+      context,
+      message: msg,
+      isError: isErr,
+    );
   }
 
   @override
@@ -201,29 +180,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!mounted) return;
     final repoAfter = ref.read(tmdbRepositoryProvider);
     final expiredAfter = repoAfter.isSessionExpired;
-    final msg = ok
-        ? 'Synced Watchlist & Ratings with TMDB'
-        : (expiredAfter
-            ? 'TMDB session expired. Tap Reconnect below to back up your My List & Likes.'
-            : (repoAfter.lastSyncError ??
-                'Could not sync with TMDB. Check connection and try again.'));
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            msg,
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
-          ),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor:
-              ok ? const Color(0xFF181B26) : const Color(0xFF3A1419),
-        ),
+    if (ok) {
+      AppToast.show(
+        context,
+        message: 'Synced Watchlist & Ratings with TMDB',
       );
+      return;
+    }
+    if (expiredAfter) {
+      AppToast.showError(
+        context,
+        UserError.authRequired(),
+        actionLabel: 'Sign In',
+        onAction: () =>
+            ref.read(authControllerProvider.notifier).reconnectSession(),
+      );
+      return;
+    }
+    AppToast.showError(
+      context,
+      UserError.from(
+        repoAfter.lastSyncError,
+        fallbackType: UserErrorType.offline,
+        logTag: 'ProfileScreen.tmdbSync',
+      ),
+    );
   }
 
   void _openMyListTab() {

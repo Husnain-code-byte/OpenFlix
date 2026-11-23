@@ -585,6 +585,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen>
       return SliverToBoxAdapter(
         child: DetailErrorRetry(
           inset: _gutter,
+          error: viewState.errorMessage,
           onRetry: () => ref.read(detailsControllerProvider(_queryKey).notifier).retry(),
         ),
       );
@@ -596,6 +597,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen>
         return SliverToBoxAdapter(
           child: DetailErrorRetry(
             inset: _gutter,
+            error: viewState.seasonError,
             onRetry: () => ref
                 .read(detailsControllerProvider(_queryKey).notifier)
                 .selectSeason(viewState.selectedSeasonNumber ?? 1),
@@ -658,6 +660,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen>
     if (viewState.hasFailed) {
       return DetailErrorRetry(
         inset: _gutter,
+        error: viewState.errorMessage,
         onRetry: () => ref.read(detailsControllerProvider(_queryKey).notifier).retry(),
       );
     }

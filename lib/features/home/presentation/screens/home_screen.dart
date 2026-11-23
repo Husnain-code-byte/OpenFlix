@@ -5,9 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/perf/image_perf.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../addons/domain/models/stream_models.dart';
 import '../../../addons/presentation/controllers/addons_controller.dart';
 import '../../../player/domain/models/player_models.dart';
@@ -22,7 +24,6 @@ import '../controllers/home_controller.dart';
 import '../widgets/catalog_shelf.dart';
 import '../widgets/continue_watching_shelf.dart';
 import '../widgets/hero_banner.dart';
-import '../widgets/pixel_brand.dart';
 import '../widgets/shimmer_loading.dart';
 import '../widgets/top_nav.dart';
 import '../../../details/presentation/screens/detail_screen.dart';
@@ -77,14 +78,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _stub(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(msg, style: AppText.chip),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF16181C),
-        shape: const StadiumBorder(),
-      ));
+    AppToast.show(
+      context,
+      message: msg,
+      icon: Icons.download_for_offline_outlined,
+    );
   }
 
   /// Opens the Figma "Movies details screen" for [m]. The screen supplies its own
@@ -317,6 +315,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       }
     });
 
+    ref.listen<HomeState>(homeControllerProvider, (prev, next) {
+      if (next is HomeReady && next.refreshError != null) {
+        final prevTick = prev is HomeReady ? prev.refreshErrorTick : 0;
+        if (next.refreshErrorTick != prevTick && mounted) {
+          final err = next.refreshError!;
+          if (err.type == UserErrorType.offline) {
+            AppToast.showOfflineCached(context);
+          } else {
+            AppToast.showError(context, err);
+          }
+        }
+      }
+    });
+
     final state = ref.watch(homeControllerProvider);
     final controller = ref.read(homeControllerProvider.notifier);
     final filter = ref.watch(homeFilterProvider);
@@ -351,10 +363,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     final List<Widget> content = switch (state) {
       HomeInitial() || HomeLoading() => [const SliverToBoxAdapter(child: HomeSkeleton())],
-      HomeError(:final message) => [
+      HomeError(:final error) => [
           SliverFillRemaining(
             hasScrollBody: false,
-            child: _ErrorView(message: message, onRetry: controller.load),
+            child: AppStatusCard.fromError(error, onAction: controller.load),
           ),
         ],
       HomeReady() => _buildReadyContent(context, state, filter, controller, ref),
@@ -401,6 +413,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     WidgetRef ref,
   ) {
     final catalogs = _catalogsFor(s, filter);
+    final shelves = ref.watch(shelvesProvider);
+    final heroItems = _heroFor(s, filter, shelves);
+
     if (filter != HomeFilter.anime &&
         filter != HomeFilter.categories &&
         s.addonError != null &&
@@ -408,10 +423,50 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       return [
         SliverFillRemaining(
           hasScrollBody: false,
-          child: _ErrorView(message: s.addonError!, onRetry: c.load),
+          child: AppStatusCard.fromError(
+            UserError.from(s.addonError, fallbackType: UserErrorType.offline),
+            onAction: c.load,
+          ),
         ),
       ];
     }
+
+    // Screen-level failure check: if all primary shelves for the active filter
+    // have finished failing with zero visible titles, show ONE screen-level
+    // status card rather than empty space or per-row errors.
+    if (catalogs.isNotEmpty && heroItems.isEmpty) {
+      var anyLoadedWithItems = false;
+      var anyPending = false;
+      String? firstErr;
+      for (final cat in catalogs) {
+        final sh = shelves[cat.key];
+        if (sh == null ||
+            sh.status == ShelfStatus.idle ||
+            sh.status == ShelfStatus.loading) {
+          anyPending = true;
+          break;
+        }
+        if (sh.metas.isNotEmpty) {
+          anyLoadedWithItems = true;
+          break;
+        }
+        if (sh.status == ShelfStatus.error) {
+          firstErr ??= sh.error;
+        }
+      }
+      if (!anyPending && !anyLoadedWithItems && firstErr != null) {
+        return [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: AppStatusCard.fromError(
+              UserError.from(firstErr, fallbackType: UserErrorType.offline),
+              onAction: c.refresh,
+            ),
+          ),
+        ];
+      }
+    }
+
     return _loaded(context, s, filter, c, ref);
   }
 
@@ -493,28 +548,4 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       ),
     ];
   }
-}
-
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          PixelAppIcon(size: 84.r),
-          SizedBox(height: 20.h),
-          Text("Couldn't reach the addon",
-              textAlign: TextAlign.center,
-              style: AppText.pageTitle.copyWith(fontSize: 20.sp)),
-          Padding(
-            padding: EdgeInsets.fromLTRB(32.w, 8.h, 32.w, 20.h),
-            child: Text('$message\nCheck your connection and try again.',
-                textAlign: TextAlign.center, style: AppText.heroMeta.copyWith(color: AppColors.textMuted)),
-          ),
-          FilledButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
-      );
 }

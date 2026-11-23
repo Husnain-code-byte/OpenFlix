@@ -5,9 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
-import '../../../home/presentation/widgets/pixel_brand.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../home/presentation/widgets/shimmer_loading.dart';
 import '../../data/collection_models.dart';
 import '../controllers/collections_controller.dart';
@@ -42,16 +43,11 @@ class _CollectionsScreenState extends ConsumerState<CollectionsScreen> {
   }
 
   void _showSelectionStub(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(msg, style: AppText.chip),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF16181C),
-          shape: const StadiumBorder(),
-        ),
-      );
+    AppToast.show(
+      context,
+      message: msg,
+      icon: Icons.download_for_offline_outlined,
+    );
   }
 
   void _onTapFolder(
@@ -80,6 +76,19 @@ class _CollectionsScreenState extends ConsumerState<CollectionsScreen> {
   @override
   Widget build(BuildContext context) {
     Responsive.init(context);
+    ref.listen<CollectionsState>(collectionsControllerProvider, (prev, next) {
+      if (next is CollectionsReady && next.refreshError != null) {
+        final prevTick = prev is CollectionsReady ? prev.refreshErrorTick : 0;
+        if (next.refreshErrorTick != prevTick && mounted) {
+          final err = next.refreshError!;
+          if (err.type == UserErrorType.offline) {
+            AppToast.showOfflineCached(context);
+          } else {
+            AppToast.showError(context, err);
+          }
+        }
+      }
+    });
     final state = ref.watch(collectionsControllerProvider);
     final controller = ref.read(collectionsControllerProvider.notifier);
     final topInset = MediaQuery.paddingOf(context).top;
@@ -133,19 +142,25 @@ class _CollectionsScreenState extends ConsumerState<CollectionsScreen> {
               CollectionsLoading() => const [
                   SliverToBoxAdapter(child: CollectionsSkeleton()),
                 ],
-              CollectionsError(:final message) => [
+              CollectionsError(:final error) => [
                   SliverFillRemaining(
                     hasScrollBody: false,
-                    child: _CollectionsErrorView(
-                      message: message,
-                      onRetry: controller.load,
+                    child: AppStatusCard.fromError(
+                      error,
+                      onAction: controller.load,
                     ),
                   ),
                 ],
               CollectionsReady(:final collections) when collections.isEmpty => [
                   SliverFillRemaining(
                     hasScrollBody: false,
-                    child: _CollectionsEmptyView(onReload: controller.load),
+                    child: AppStatusCard(
+                      icon: Icons.collections_bookmark_outlined,
+                      title: 'No collections found',
+                      message: 'Pull down or tap retry to reload your collections.',
+                      actionLabel: 'Retry',
+                      onAction: controller.load,
+                    ),
                   ),
                 ],
               CollectionsReady(:final heroItems, :final collections) => [
@@ -342,90 +357,6 @@ class _CollectionRowSkeleton extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CollectionsEmptyView extends StatelessWidget {
-  const _CollectionsEmptyView({required this.onReload});
-
-  final VoidCallback onReload;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.collections_bookmark_outlined,
-              size: 56,
-              color: AppColors.textMuted,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No collections available',
-              textAlign: TextAlign.center,
-              style: AppText.pageTitle.copyWith(fontSize: 20),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Premade collections could not be found. Try reloading to restore your rows.',
-              textAlign: TextAlign.center,
-              style: AppText.heroMeta.copyWith(color: AppColors.textMuted),
-            ),
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: onReload,
-              child: const Text('Reload'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CollectionsErrorView extends StatelessWidget {
-  const _CollectionsErrorView({
-    required this.message,
-    required this.onRetry,
-  });
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const PixelAppIcon(size: 84),
-            const SizedBox(height: 20),
-            Text(
-              "Couldn't load collections",
-              textAlign: TextAlign.center,
-              style: AppText.pageTitle.copyWith(fontSize: 20),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: AppText.heroMeta.copyWith(color: AppColors.textMuted),
-            ),
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: onRetry,
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
       ),
     );
   }

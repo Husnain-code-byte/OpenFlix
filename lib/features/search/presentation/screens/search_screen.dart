@@ -4,9 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../details/presentation/screens/detail_screen.dart';
+import '../../../home/data/models/manifest_model.dart';
 import '../../../home/data/models/meta_model.dart';
 import '../../../home/presentation/controllers/home_controller.dart';
 import '../../../home/presentation/widgets/catalog_shelf.dart';
@@ -65,14 +68,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   void _stub(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(msg, style: AppText.chip),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF16181C),
-        shape: const StadiumBorder(),
-      ));
+    AppToast.show(
+      context,
+      message: msg,
+      icon: Icons.download_for_offline_outlined,
+    );
   }
 
   void _openDetails(BuildContext context, MetaModel m) {
@@ -130,6 +130,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ? _ActiveSearchResultsView(
                     state: searchState,
                     onTapMeta: (m) => _openDetails(context, m),
+                    onRetry: () => searchNotifier.submitSearch(searchState.query),
                   )
                 : _DiscoveryShelvesView(
                     onTapMeta: (m) => _openDetails(context, m),
@@ -313,10 +314,12 @@ class _ActiveSearchResultsView extends StatelessWidget {
   const _ActiveSearchResultsView({
     required this.state,
     required this.onTapMeta,
+    required this.onRetry,
   });
 
   final SearchState state;
   final ValueChanged<MetaModel> onTapMeta;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -335,34 +338,16 @@ class _ActiveSearchResultsView extends StatelessWidget {
     }
 
     if (rows.isEmpty && !state.isSearching) {
-      return Center(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 32.w),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'No results for “${state.query.trim()}”',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 17.sp,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-              SizedBox(height: 8.h),
-              Text(
-                'Try searching for another movie, series, or actor.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 14.sp,
-                  fontWeight: FontWeight.w400,
-                  color: const Color(0xFF8B8B8B),
-                ),
-              ),
-            ],
-          ),
-        ),
+      if (state.errorMessage != null) {
+        return AppStatusCard.fromError(
+          UserError.from(state.errorMessage, logTag: 'SearchScreen'),
+          onAction: onRetry,
+        );
+      }
+      return const AppStatusCard(
+        icon: Icons.search_off_rounded,
+        title: 'No results found',
+        message: 'Try another movie, show, or actor name.',
       );
     }
 
@@ -411,23 +396,67 @@ class _DiscoveryShelvesView extends ConsumerWidget {
             ShelfSkeleton(),
           ],
         ),
-      HomeError() => const SizedBox.shrink(),
-      HomeReady(:final catalogs) => ListView.builder(
-          padding: EdgeInsets.only(top: 16.h, bottom: 24.h),
-          cacheExtent: 900,
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          itemCount: catalogs.length,
-          itemBuilder: (context, index) {
-            final cat = catalogs[index];
-            return CatalogShelf(
-              key: ValueKey('search_discovery_${cat.key}'),
-              catalog: cat,
-              onVisible: () => homeController.ensureShelf(cat.key),
-              onRetry: () => homeController.retryShelf(cat.key),
-              onTapMeta: onTapMeta,
-            );
-          },
+      HomeError(:final error) => AppStatusCard.fromError(
+          error,
+          onAction: homeController.load,
+        ),
+      HomeReady(:final catalogs) => _buildDiscoveryFeed(
+          ref,
+          catalogs,
+          homeController,
         ),
     };
+  }
+
+  Widget _buildDiscoveryFeed(
+    WidgetRef ref,
+    List<CatalogItemModel> catalogs,
+    HomeController homeController,
+  ) {
+    final shelves = ref.watch(shelvesProvider);
+    if (catalogs.isNotEmpty) {
+      var anyLoaded = false;
+      var anyPending = false;
+      String? firstErr;
+      for (final cat in catalogs) {
+        final sh = shelves[cat.key];
+        if (sh == null ||
+            sh.status == ShelfStatus.idle ||
+            sh.status == ShelfStatus.loading) {
+          anyPending = true;
+          break;
+        }
+        if (sh.metas.isNotEmpty) {
+          anyLoaded = true;
+          break;
+        }
+        if (sh.status == ShelfStatus.error) {
+          firstErr ??= sh.error;
+        }
+      }
+      if (!anyPending && !anyLoaded && firstErr != null) {
+        return AppStatusCard.fromError(
+          UserError.from(firstErr, fallbackType: UserErrorType.offline),
+          onAction: homeController.refresh,
+        );
+      }
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.only(top: 16.h, bottom: 24.h),
+      cacheExtent: 900,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      itemCount: catalogs.length,
+      itemBuilder: (context, index) {
+        final cat = catalogs[index];
+        return CatalogShelf(
+          key: ValueKey('search_discovery_${cat.key}'),
+          catalog: cat,
+          onVisible: () => homeController.ensureShelf(cat.key),
+          onRetry: () => homeController.retryShelf(cat.key),
+          onTapMeta: onTapMeta,
+        );
+      },
+    );
   }
 }

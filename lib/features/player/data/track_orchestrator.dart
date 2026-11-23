@@ -269,8 +269,10 @@ abstract final class TrackOrchestrator {
     final l = raw.trim().toLowerCase();
     if (l.contains('ass') || l.contains('ssa')) return 'ASS';
     if (l.contains('pgs')) return 'PGS';
+    if (l.contains('dvd_subtitle') || l.contains('vobsub')) return 'VobSub';
     if (l.contains('subrip') || l.contains('srt')) return 'SRT';
-    if (l.contains('vtt')) return 'VTT';
+    if (l.contains('webvtt') || l.contains('vtt')) return 'VTT';
+    if (l.contains('mov_text') || l.contains('tx3g')) return 'TX3G';
     return raw.toUpperCase();
   }
 }

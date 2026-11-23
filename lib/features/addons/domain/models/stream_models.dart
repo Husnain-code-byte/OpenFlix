@@ -199,7 +199,97 @@ class ResolvedStream extends Equatable {
   final bool notWebReady;
   final String? providerLang;
 
+  /// Normalizes a candidate stream URL to a direct `http://` or `https://` URI
+  /// suitable for internal libmpv playback.
+  ///
+  /// Handles protocol-relative URLs (`//host/path`) and Android `intent://`
+  /// links that wrap an HTTP/HTTPS stream or `S.browser_fallback_url`.
+  /// Returns `null` for genuinely non-HTTP schemes such as `magnet:` or
+  /// `stremio://`.
+  static String? normalizeHttpPlayableUrl(String? raw) {
+    final trimmed = raw?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+
+    var candidate = trimmed;
+    if (candidate.startsWith('//')) {
+      candidate = 'https:$candidate';
+    } else if (candidate.toLowerCase().startsWith('intent://')) {
+      final fallbackMatch = RegExp(
+        r';S\.browser_fallback_url=([^;]+)',
+        caseSensitive: false,
+      ).firstMatch(candidate);
+      if (fallbackMatch != null) {
+        final decoded = Uri.decodeComponent(fallbackMatch.group(1)!).trim();
+        return normalizeHttpPlayableUrl(decoded);
+      }
+      final schemeMatch = RegExp(
+        r';scheme=(https?)',
+        caseSensitive: false,
+      ).firstMatch(candidate);
+      final hashIdx = candidate.indexOf('#Intent');
+      if (schemeMatch != null && hashIdx > 'intent://'.length) {
+        final scheme = schemeMatch.group(1)!.toLowerCase();
+        final authorityAndPath = candidate.substring('intent://'.length, hashIdx);
+        candidate = '$scheme://$authorityAndPath';
+      } else {
+        return null;
+      }
+    }
+
+    final uri = Uri.tryParse(candidate) ?? Uri.tryParse(Uri.encodeFull(candidate));
+    if (uri == null || !uri.hasScheme) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if ((scheme != 'http' && scheme != 'https') || uri.host.trim().isEmpty) {
+      return null;
+    }
+    return uri.toString();
+  }
+
+  /// Canonical HTTP/HTTPS URL playable directly inside OpenFlix's built-in
+  /// libmpv player. Prefers [url] and falls back to [externalUrl] whenever
+  /// either is a valid HTTP/HTTPS link (including extensionless Debrid/proxy
+  /// redirect URLs).
+  String? get internalPlayableUrl =>
+      normalizeHttpPlayableUrl(url) ?? normalizeHttpPlayableUrl(externalUrl);
+
+  /// True whenever this stream can be opened directly inside OpenFlix's
+  /// internal video player without invoking Android external intents.
+  bool get canPlayInternally => internalPlayableUrl != null;
+
+  /// Builds request headers for libmpv / HTTP probing, forwarding all
+  /// `behaviorHints.proxyHeaders.request` entries (e.g. `User-Agent`,
+  /// `Referer`, `Origin`, `Cookie`) without duplicating case-variant keys.
+  Map<String, String> buildRequestHeaders({
+    required String defaultUserAgent,
+  }) {
+    final out = <String, String>{};
+    final seenLower = <String>{};
+
+    headers.forEach((rawKey, rawVal) {
+      final key = rawKey.trim();
+      final val = rawVal.trim();
+      if (key.isEmpty || val.isEmpty) return;
+      final lower = key.toLowerCase();
+      if (seenLower.add(lower)) {
+        out[key] = val;
+      }
+    });
+
+    final ref = referer?.trim();
+    if (ref != null && ref.isNotEmpty && !seenLower.contains('referer')) {
+      out['Referer'] = ref;
+      seenLower.add('referer');
+    }
+
+    if (!seenLower.contains('user-agent') && defaultUserAgent.isNotEmpty) {
+      out['User-Agent'] = defaultUserAgent;
+    }
+    return out;
+  }
+
   String get dedupKey {
+    final playable = internalPlayableUrl;
+    if (playable != null) return 'url:$playable';
     if (url != null && url!.isNotEmpty) return 'url:${url!}';
     if (infoHash != null && infoHash!.isNotEmpty) {
       return 'ih:${infoHash!.toLowerCase()}:${fileIdx ?? -1}';
@@ -218,6 +308,7 @@ class ResolvedStream extends Equatable {
   }
 
   String? get playableOrCopyableTarget =>
+      internalPlayableUrl ??
       url ??
       externalUrl ??
       (infoHash != null ? 'magnet:?xt=urn:btih:$infoHash' : null) ??
@@ -232,6 +323,7 @@ class ResolvedStream extends Equatable {
         title,
         transport,
         url,
+        externalUrl,
         infoHash,
         fileIdx,
         qualityLabel,

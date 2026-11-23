@@ -72,13 +72,11 @@ class _CatalogShelfState extends ConsumerState<CatalogShelf> with AutomaticKeepA
     _ensureRequested(s.status);
 
     if (s.metas.isEmpty) {
-      // Nothing to show yet: hidden (resolved empty), skeleton, or error.
-      if (s.status == ShelfStatus.loaded) return const SizedBox.shrink();
-      if (s.status == ShelfStatus.error) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: AppDimens.rowSpacing),
-          child: _ErrorTile(onRetry: widget.onRetry),
-        );
+      // Never inject per-row error boxes into the feed: silently collapse
+      // individual failed/empty rows; screen-level offline/failure state is
+      // handled once by the parent screen when all primary rows fail.
+      if (s.status == ShelfStatus.loaded || s.status == ShelfStatus.error) {
+        return const SizedBox.shrink();
       }
       return Padding(
         padding: EdgeInsets.only(bottom: AppDimens.rowSpacing),
@@ -98,26 +96,4 @@ class _CatalogShelfState extends ConsumerState<CatalogShelf> with AutomaticKeepA
       child: PosterRow(title: heading, metas: s.metas, onTapMeta: widget.onTapMeta),
     );
   }
-}
-
-class _ErrorTile extends StatelessWidget {
-  const _ErrorTile({required this.onRetry});
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        height: AppDimens.posterHeight,
-        margin: EdgeInsets.symmetric(horizontal: AppDimens.screenPadding),
-        decoration: BoxDecoration(
-          color: const Color(0x05FFFFFF),
-          border: Border.all(color: const Color(0x0FFFFFFF)),
-          borderRadius: BorderRadius.circular(AppDimens.posterRadius),
-        ),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text("Couldn't load this catalog",
-              style: AppText.heroMeta.copyWith(fontSize: 13.sp, color: AppColors.textMuted)),
-          SizedBox(height: 10.h),
-          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
-        ]),
-      );
 }

@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
+import '../../../addons/presentation/screens/addons_screen.dart';
+import '../../../addons/presentation/widgets/addons_ui_kit.dart';
 import '../../../preferences/domain/models/playback_preferences.dart';
 import '../../domain/models/player_models.dart';
 import '../../domain/models/ranked_stream.dart';
@@ -484,10 +488,10 @@ class _PlayerLinksSheet extends StatelessWidget {
         final st = controller.state;
         final activeKey = st.activeStream?.dedupKey;
         final directStreams = st.rankedStreams
-            .where((r) => r.stream.transport.isPlayableDirect)
+            .where((r) => r.stream.canPlayInternally)
             .toList(growable: false);
         final otherStreams = st.rankedStreams
-            .where((r) => !r.stream.transport.isPlayableDirect)
+            .where((r) => !r.stream.canPlayInternally)
             .toList(growable: false);
 
         return _PlayerModalFrame(
@@ -594,34 +598,45 @@ class _PlayerLinksSheet extends StatelessWidget {
           ),
           child: st.rankedStreams.isEmpty
               ? Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (st.isResolvingLinks)
-                        const CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: st.isResolvingLinks
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'Finding playable streams...',
+                              textAlign: TextAlign.center,
+                              style: _inter(
+                                fontSize: 13,
+                                color: _ModalColors.textMuted,
+                              ),
+                            ),
+                          ],
                         )
-                      else
-                        const Icon(
-                          Icons.link_off_rounded,
-                          size: 28,
-                          color: _ModalColors.textMuted,
-                        ),
-                      const SizedBox(height: 10),
-                      Text(
-                        st.isResolvingLinks
-                            ? 'Scanning installed addons & probing fastest links...'
-                            : 'No stream links returned for this title.',
-                        textAlign: TextAlign.center,
-                        style: _inter(
-                          fontSize: 13.5,
-                          color: _ModalColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
+                      : (!st.hasAnyStreamAddon
+                          ? AppStatusCard.noAddons(
+                              compact: true,
+                              onInstallAddons: () {
+                                final nav = Navigator.of(context);
+                                nav.pop();
+                                nav.pushReplacement<void, void>(
+                                  addonsRoute<void>(const AddonsScreen()),
+                                );
+                              },
+                            )
+                          : AppStatusCard.fromError(
+                              UserError.noStreams(),
+                              compact: true,
+                              onAction: () {
+                                Navigator.of(context).pop();
+                                controller.retryCurrentOrNext();
+                              },
+                            )),
                 )
               : ListView.builder(
                   padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
@@ -676,7 +691,11 @@ class _PlayerLinksSheet extends StatelessWidget {
                           onTap: () {
                             HapticFeedback.lightImpact();
                             Navigator.of(context).pop();
-                            controller.openExternalStream(ext.stream);
+                            if (ext.stream.canPlayInternally) {
+                              controller.switchStream(ext);
+                            } else {
+                              controller.openExternalStream(ext.stream);
+                            }
                           },
                         ),
                       ),
@@ -704,7 +723,7 @@ class _RankedStreamTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = ranked.stream;
-    final isExternalOnly = !s.transport.isPlayableDirect;
+    final isExternalOnly = !s.canPlayInternally;
     final isDead = ranked.probe != null && !ranked.probe!.isAlive;
     final speed = ranked.speedLabel;
     final langLabel = ranked.languageSummaryLabel;

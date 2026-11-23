@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/perf/image_perf.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../home/data/models/meta_model.dart';
 import '../../../home/presentation/widgets/poster_card.dart';
 import '../../../preferences/domain/models/playback_preferences.dart';
@@ -231,27 +233,13 @@ class _TmdbAuthScreenState extends ConsumerState<TmdbAuthScreen>
     await Clipboard.setData(ClipboardData(text: url));
     if (!mounted) return;
     setState(() => _copiedRecently = true);
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Verification link copied to clipboard',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
-          ),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF241630),
-          duration: const Duration(seconds: 2),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: const BorderSide(color: Color(0x2EFFFFFF)),
-          ),
-        ),
-      );
+    AppToast.show(
+      context,
+      message: 'Verification link copied',
+      icon: Icons.copy_rounded,
+      duration: const Duration(milliseconds: 2200),
+      cooldown: const Duration(milliseconds: 500),
+    );
     Future<void>.delayed(const Duration(milliseconds: 1800), () {
       if (mounted) setState(() => _copiedRecently = false);
     });
@@ -795,32 +783,39 @@ class _SignInStatusBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (authState.errorMessage != null) {
+      final mapped = UserError.from(
+        authState.errorMessage,
+        fallbackType: UserErrorType.authRequired,
+        logTag: 'TmdbAuthScreen',
+      );
       return Padding(
         padding: EdgeInsets.only(top: 16.h),
         child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+          padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
           decoration: BoxDecoration(
-            color: const Color(0x26E50914),
-            borderRadius: BorderRadius.circular(6.r),
-            border: Border.all(color: const Color(0x55E50914)),
+            color: AppFeedbackColors.surface,
+            borderRadius: BorderRadius.circular(10.r),
+            border: Border.all(color: AppFeedbackColors.border),
           ),
           child: Row(
             children: [
               Icon(
-                Icons.error_outline_rounded,
+                mapped.type == UserErrorType.offline
+                    ? Icons.wifi_off_rounded
+                    : Icons.info_outline_rounded,
                 size: 16.r,
-                color: const Color(0xFFFF8A8F),
+                color: AppFeedbackColors.errorIcon,
               ),
               SizedBox(width: 8.w),
               Expanded(
                 child: Text(
-                  authState.errorMessage!,
+                  mapped.message,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.inter(
                     fontSize: 12.sp,
                     fontWeight: FontWeight.w500,
-                    color: const Color(0xFFFFD2D5),
+                    color: AppFeedbackColors.textPrimary,
                   ),
                 ),
               ),
@@ -831,7 +826,7 @@ class _SignInStatusBanner extends StatelessWidget {
                   padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  foregroundColor: Colors.white,
+                  foregroundColor: AppFeedbackColors.accent,
                 ),
                 child: Text(
                   'Retry',

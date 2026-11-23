@@ -108,7 +108,7 @@ class _RootShellState extends ConsumerState<RootShell> {
   }
 
   void _scheduleSilentUpdateCheck() {
-    Future<void>.delayed(const Duration(milliseconds: 650), () {
+    Future<void>.delayed(const Duration(milliseconds: 1500), () {
       if (!mounted) return;
       UpdateService.instance.runSilentStartupCheck(context);
     });

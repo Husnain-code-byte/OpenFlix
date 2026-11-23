@@ -5,6 +5,7 @@ import 'package:equatable/equatable.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/perf/image_perf.dart';
 import '../../../addons/data/stremio_addon_service.dart';
 import '../../../addons/domain/models/addon_models.dart';
@@ -119,29 +120,51 @@ class HomeReady extends HomeState {
     required this.catalogs,
     required this.hero,
     this.addonError,
+    this.refreshError,
+    this.refreshErrorTick = 0,
   });
   final ManifestModel manifest;
   final List<CatalogItemModel> catalogs;
   final List<MetaModel> hero;
   final String? addonError;
+  final UserError? refreshError;
+  final int refreshErrorTick;
 
-  HomeReady copyWith({List<MetaModel>? hero, String? addonError}) =>
+  HomeReady copyWith({
+    List<MetaModel>? hero,
+    String? addonError,
+    bool clearAddonError = false,
+    UserError? refreshError,
+    bool clearRefreshError = false,
+    int? refreshErrorTick,
+  }) =>
       HomeReady(
         manifest: manifest,
         catalogs: catalogs,
         hero: hero ?? this.hero,
-        addonError: addonError ?? this.addonError,
+        addonError: clearAddonError ? null : (addonError ?? this.addonError),
+        refreshError:
+            clearRefreshError ? null : (refreshError ?? this.refreshError),
+        refreshErrorTick: refreshErrorTick ?? this.refreshErrorTick,
       );
 
   @override
-  List<Object?> get props => [manifest, catalogs, hero, addonError];
+  List<Object?> get props => [
+        manifest,
+        catalogs,
+        hero,
+        addonError,
+        refreshError,
+        refreshErrorTick,
+      ];
 }
 
 class HomeError extends HomeState {
-  const HomeError(this.message);
-  final String message;
+  const HomeError(this.error);
+  final UserError error;
+  String get message => error.message;
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [error];
 }
 
 class HomeController extends Notifier<HomeState> {
@@ -342,15 +365,43 @@ class HomeController extends Notifier<HomeState> {
       // First batch concurrently; hero appears as soon as the first list resolves.
       final batch = standardCatalogs.take(ApiConstants.initialCatalogBatch).toList();
 
+      final batchErrors = <Object>[];
       final results = await Future.wait(
-        batch.map((c) => _loadShelf(c).then<List<MetaModel>?>((v) => v).catchError((_) => null)),
+        batch.map(
+          (c) => _loadShelf(c).then<List<MetaModel>?>((v) => v).catchError((Object err) {
+            batchErrors.add(err);
+            return null;
+          }),
+        ),
       );
       final lists = results.whereType<List<MetaModel>>().toList();
       if (standardCatalogs.isNotEmpty && lists.isEmpty) {
         final cur = state;
+        final mapped = UserError.from(
+          batchErrors.firstOrNull ?? 'offline',
+          fallbackType: UserErrorType.offline,
+          logTag: 'HomeController.batch',
+        );
         if (cur is HomeReady) {
-          state = cur.copyWith(addonError: 'Could not load catalogs from TMDB.');
+          final hasCachedShelves = ref
+              .read(shelvesProvider)
+              .values
+              .any((s) => s.metas.isNotEmpty);
+          if (isRefresh && (cur.hero.isNotEmpty || hasCachedShelves)) {
+            state = cur.copyWith(
+              clearAddonError: true,
+              refreshError: mapped,
+              refreshErrorTick: cur.refreshErrorTick + 1,
+            );
+          } else {
+            state = cur.copyWith(addonError: mapped.message);
+          }
         }
+      } else if (state is HomeReady) {
+        state = (state as HomeReady).copyWith(
+          clearAddonError: true,
+          clearRefreshError: true,
+        );
       }
       _extendHero();
 
@@ -374,9 +425,33 @@ class HomeController extends Notifier<HomeState> {
       }
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) return;
-      state = HomeError(e.message ?? 'Network error');
+      final mapped = UserError.from(e, logTag: 'HomeController.load');
+      final cur = state;
+      final hasCached = cur is HomeReady &&
+          (cur.hero.isNotEmpty ||
+              ref.read(shelvesProvider).values.any((s) => s.metas.isNotEmpty));
+      if (isRefresh && hasCached) {
+        state = cur.copyWith(
+          refreshError: mapped,
+          refreshErrorTick: cur.refreshErrorTick + 1,
+        );
+        return;
+      }
+      state = HomeError(mapped);
     } catch (e) {
-      state = HomeError(e.toString().replaceFirst('Exception: ', ''));
+      final mapped = UserError.from(e, logTag: 'HomeController.load');
+      final cur = state;
+      final hasCached = cur is HomeReady &&
+          (cur.hero.isNotEmpty ||
+              ref.read(shelvesProvider).values.any((s) => s.metas.isNotEmpty));
+      if (isRefresh && hasCached) {
+        state = cur.copyWith(
+          refreshError: mapped,
+          refreshErrorTick: cur.refreshErrorTick + 1,
+        );
+        return;
+      }
+      state = HomeError(mapped);
     }
   }
 

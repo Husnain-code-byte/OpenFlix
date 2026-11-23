@@ -126,8 +126,7 @@ abstract final class StreamRanker {
           reliabilityTracker?.isHostPenalized(s) ?? false;
       final streamFailed = reliabilityTracker?.isStreamFailed(s) ?? false;
 
-      final isPlayableTransport =
-          s.transport.isPlayableDirect && s.url != null && s.url!.isNotEmpty;
+      final isPlayableTransport = s.canPlayInternally;
       final isDead = probe != null && !probe.isAlive;
       final isAutoPlayEligible =
           isPlayableTransport && !isDead && !streamFailed;
@@ -161,8 +160,8 @@ abstract final class StreamRanker {
       if (eligDiff != 0) return eligDiff;
 
       // 2. Direct playable transport over torrent/external even when both dead/excluded
-      final transDiff = (b.stream.transport.isPlayableDirect ? 1 : 0) -
-          (a.stream.transport.isPlayableDirect ? 1 : 0);
+      final transDiff = (b.stream.canPlayInternally ? 1 : 0) -
+          (a.stream.canPlayInternally ? 1 : 0);
       if (transDiff != 0) return transDiff;
 
       // 3. Deterministic composite score
@@ -247,7 +246,7 @@ abstract final class StreamRanker {
     if (probe != null) {
       if (!probe.isAlive) {
         score -= 500;
-      } else {
+      } else if (!probe.isInconclusive) {
         if (probe.ttfbMs != null) {
           final ms = probe.ttfbMs!.clamp(100, 1800);
           final ttfbPoints =
@@ -275,6 +274,13 @@ abstract final class StreamRanker {
       score += 25;
     } else if (meta.releaseSource == ReleaseSourceHint.remux) {
       score += 10;
+    }
+
+    if (meta.isDolbyVisionProfile5Only) {
+      // Deprioritize Dolby Vision Profile 5 (DV without HDR10/SDR fallback)
+      // slightly below standard HDR10/SDR links of the same resolution while
+      // keeping it auto-play eligible and manually selectable in Links.
+      score -= 35;
     }
 
     if (meta.videoCodec == VideoCodecHint.hevc ||

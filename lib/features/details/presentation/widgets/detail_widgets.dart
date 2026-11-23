@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/perf/image_perf.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../home/presentation/utils/title_format.dart';
 import '../../../home/presentation/widgets/poster_card.dart';
 import '../../data/tmdb_models.dart';
@@ -1272,44 +1274,31 @@ class _SkeletonRail extends StatelessWidget {
       );
 }
 
-/// Lightweight retry boundary shown when TMDB metadata fails to load.
+/// Compact OLED retry boundary shown when TMDB metadata or episodes fail.
 class DetailErrorRetry extends StatelessWidget {
-  const DetailErrorRetry({super.key, required this.onRetry, this.inset = 16.0});
+  const DetailErrorRetry({
+    super.key,
+    required this.onRetry,
+    this.error,
+    this.inset = 16.0,
+  });
 
   final VoidCallback onRetry;
+  final Object? error;
   final double inset;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: EdgeInsets.symmetric(horizontal: inset, vertical: 12.h),
-        child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 16.h),
-          decoration: BoxDecoration(
-            color: const Color(0x0AFFFFFF),
-            borderRadius: BorderRadius.circular(8.r),
-            border: Border.all(color: const Color(0x1AFFFFFF)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  "Couldn't load details right now.",
-                  style: DetailsText.inter(
-                    size: 13.sp,
-                    color: AppColors.textMuted,
-                    height: 18 / 13,
-                  ),
-                ),
-              ),
-              SizedBox(width: 12.w),
-              OutlinedButton(
-                onPressed: onRetry,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        ),
-      );
+  Widget build(BuildContext context) {
+    final mapped = UserError.from(error, logTag: 'DetailErrorRetry');
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 16.h),
+      child: AppStatusCard.fromError(
+        mapped,
+        onAction: onRetry,
+        compact: true,
+      ),
+    );
+  }
 }
 
 /// Responsive 3-column grid of Cast members displaying each actor's photo

@@ -293,15 +293,15 @@ class StremioAddonService {
     Map<String, dynamic> m,
     int index,
   ) {
-    final url = (m['url'] as String?)?.trim();
+    final rawUrl = (m['url'] as String?)?.trim();
     final infoHash = (m['infoHash'] as String?)?.trim();
     final ytId = (m['ytId'] as String?)?.trim();
-    final externalUrl = (m['externalUrl'] as String?)?.trim();
+    final rawExternalUrl = (m['externalUrl'] as String?)?.trim();
 
-    if ((url == null || url.isEmpty) &&
+    if ((rawUrl == null || rawUrl.isEmpty) &&
         (infoHash == null || infoHash.isEmpty) &&
         (ytId == null || ytId.isEmpty) &&
-        (externalUrl == null || externalUrl.isEmpty)) {
+        (rawExternalUrl == null || rawExternalUrl.isEmpty)) {
       return null;
     }
 
@@ -310,19 +310,47 @@ class StremioAddonService {
         : const <String, dynamic>{};
 
     final headers = <String, String>{};
-    final proxyHeaders = behaviorHints['proxyHeaders'];
-    if (proxyHeaders is Map && proxyHeaders['request'] is Map) {
-      final req = Map<String, dynamic>.from(proxyHeaders['request'] as Map);
-      req.forEach((k, v) {
-        if (v != null) headers[k.toString()] = v.toString();
+    void mergeHeaders(dynamic source) {
+      if (source is! Map) return;
+      source.forEach((k, v) {
+        final key = k?.toString().trim() ?? '';
+        if (key.isEmpty || v == null) return;
+        final val = v is List ? v.join(', ').trim() : v.toString().trim();
+        if (val.isEmpty) return;
+        // Replace any prior entry with the same case-insensitive key.
+        headers.removeWhere((existing, _) => existing.toLowerCase() == key.toLowerCase());
+        headers[key] = val;
       });
     }
 
+    // Fallback header locations first, then Stremio's canonical proxyHeaders.request
+    // with highest precedence so User-Agent, Referer, Origin, Cookie are preserved.
+    mergeHeaders(m['headers']);
+    mergeHeaders(behaviorHints['headers']);
+    final proxyHeaders = behaviorHints['proxyHeaders'];
+    if (proxyHeaders is Map) {
+      mergeHeaders(proxyHeaders['request']);
+    }
+
+    // Normalize HTTP/HTTPS targets from `url` first, or promote an HTTP/HTTPS
+    // `externalUrl` (including extensionless Debrid/proxy redirect URLs) so it
+    // plays directly inside OpenFlix's built-in libmpv player instead of
+    // triggering Android's external app chooser.
+    final normalizedHttpUrl = ResolvedStream.normalizeHttpPlayableUrl(rawUrl);
+    final normalizedExternalHttpUrl =
+        ResolvedStream.normalizeHttpPlayableUrl(rawExternalUrl);
+    final effectivePlayableUrl = normalizedHttpUrl ?? normalizedExternalHttpUrl;
+
+    final rawNonHttpTarget = effectivePlayableUrl == null
+        ? (rawUrl != null && rawUrl.isNotEmpty ? rawUrl : rawExternalUrl)
+        : rawExternalUrl;
+
     final transport = _detectTransport(
-      url: url,
+      playableUrl: effectivePlayableUrl,
+      rawUrl: rawUrl,
       infoHash: infoHash,
       ytId: ytId,
-      externalUrl: externalUrl,
+      externalUrl: rawNonHttpTarget,
     );
 
     final rawName = (m['name'] as String?)?.trim() ?? addon.manifest.name;
@@ -348,6 +376,14 @@ class StremioAddonService {
       }
     }
 
+    String? referer;
+    for (final entry in headers.entries) {
+      if (entry.key.toLowerCase() == 'referer') {
+        referer = entry.value;
+        break;
+      }
+    }
+
     return ResolvedStream(
       id: '${addon.id}_$index',
       architecture: AddonArchitecture.stremio,
@@ -357,15 +393,15 @@ class StremioAddonService {
       title: rawName,
       description: rawDesc,
       transport: transport,
-      url: url,
+      url: effectivePlayableUrl,
       infoHash: infoHash,
       fileIdx: (m['fileIdx'] as num?)?.toInt(),
       trackerSources:
           (m['sources'] as List?)?.whereType<String>().toList() ?? const [],
       youtubeId: ytId,
-      externalUrl: externalUrl,
+      externalUrl: rawNonHttpTarget,
       headers: headers,
-      referer: headers['Referer'] ?? headers['referer'],
+      referer: referer,
       qualityLabel: qualityLabel,
       qualityRank: qualityRank,
       sizeBytes: (behaviorHints['videoSize'] as num?)?.toInt(),
@@ -377,18 +413,24 @@ class StremioAddonService {
   }
 
   static StreamTransport _detectTransport({
-    String? url,
+    String? playableUrl,
+    String? rawUrl,
     String? infoHash,
     String? ytId,
     String? externalUrl,
   }) {
-    if (url != null && url.isNotEmpty) {
-      final lower = url.toLowerCase();
+    if (playableUrl != null && playableUrl.isNotEmpty) {
+      final lower = playableUrl.toLowerCase();
       if (lower.contains('.m3u8')) return StreamTransport.hls;
       if (lower.contains('.mpd')) return StreamTransport.dash;
       return StreamTransport.directHttp;
     }
-    if (infoHash != null && infoHash.isNotEmpty) return StreamTransport.torrent;
+    if ((rawUrl != null && rawUrl.toLowerCase().startsWith('magnet:')) ||
+        (externalUrl != null &&
+            externalUrl.toLowerCase().startsWith('magnet:')) ||
+        (infoHash != null && infoHash.isNotEmpty)) {
+      return StreamTransport.torrent;
+    }
     if (ytId != null && ytId.isNotEmpty) return StreamTransport.youtube;
     return StreamTransport.externalUrl;
   }

@@ -186,5 +186,50 @@ void main() {
       );
       expect(ranked.map((r) => r.stream.id).toList(), ['right_ep']);
     });
+
+    test('deprioritizes DV Profile 5 below HDR10/SDR of same resolution while keeping selectable', () {
+      final dvP5 = makeStream(
+        id: 'dv_p5',
+        title: '1080p Hindi DV WEB-DL x265',
+        url: 'https://a.com/resolve/dv5',
+      );
+      final hdr10 = makeStream(
+        id: 'hdr10',
+        title: '1080p Hindi HDR10 WEB-DL x265',
+        url: 'https://b.com/resolve/hdr10',
+      );
+      final ranked = StreamRanker.rank(
+        streams: [dvP5, hdr10],
+        prefs: prefs,
+        displayProfile: phone1080p,
+      );
+      expect(ranked.first.stream.id, 'hdr10');
+      expect(ranked.last.stream.id, 'dv_p5');
+      expect(ranked.last.isAutoPlayEligible, isTrue);
+    });
+
+    test('keeps inconclusive (e.g. 403/405 probe-blocked) streams auto-play eligible', () {
+      final unprobed = makeStream(
+        id: 'blocked_probe',
+        title: '1080p Hindi WEB-DL',
+        url: 'https://proxy.example.com/resolve/extensionless',
+      );
+      final ranked = StreamRanker.rank(
+        streams: [unprobed],
+        prefs: prefs,
+        displayProfile: phone1080p,
+        probeCache: {
+          unprobed.dedupKey: const StreamProbeResult(
+            isAlive: true,
+            isInconclusive: true,
+            statusCode: 405,
+            probedAtMs: 1000,
+            error: 'HTTP 405 (unprobed)',
+          ),
+        },
+      );
+      expect(ranked.single.isAutoPlayEligible, isTrue);
+      expect(ranked.single.speedLabel, isNull);
+    });
   });
 }

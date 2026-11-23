@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../details/presentation/screens/detail_screen.dart';
 import '../../../details/presentation/widgets/detail_widgets.dart';
 import '../../../home/data/models/meta_model.dart';
@@ -98,14 +100,11 @@ class SavedCollectionScreenView extends ConsumerWidget {
   final VoidCallback? onBack;
 
   void _stub(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(msg, style: AppText.chip),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF16181C),
-        shape: const StadiumBorder(),
-      ));
+    AppToast.show(
+      context,
+      message: msg,
+      icon: Icons.download_for_offline_outlined,
+    );
   }
 
   void _openDetails(BuildContext context, MetaModel m) {
@@ -180,13 +179,15 @@ class SavedCollectionScreenView extends ConsumerWidget {
     }
 
     if (state.errorMessage != null && state.items.isEmpty) {
-      return ListView(
-        padding: EdgeInsets.only(top: 16.h, bottom: 24.h),
+      return CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-          _SavedCollectionErrorTile(
-            title: title,
-            onRetry: onRefresh,
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: AppStatusCard.fromError(
+              UserError.from(state.errorMessage, logTag: 'MyListScreen'),
+              onAction: onRefresh,
+            ),
           ),
         ],
       );
@@ -399,37 +400,5 @@ class _EmptyCollectionRow extends StatelessWidget {
             ),
           ),
         ],
-      );
-}
-
-class _SavedCollectionErrorTile extends StatelessWidget {
-  const _SavedCollectionErrorTile({
-    required this.title,
-    required this.onRetry,
-  });
-
-  final String title;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        height: AppDimens.posterHeight,
-        margin: EdgeInsets.symmetric(horizontal: AppDimens.screenPadding),
-        decoration: BoxDecoration(
-          color: const Color(0x05FFFFFF),
-          border: Border.all(color: const Color(0x0FFFFFFF)),
-          borderRadius: BorderRadius.circular(AppDimens.posterRadius),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              "Couldn't load $title",
-              style: AppText.heroMeta.copyWith(fontSize: 13.sp, color: AppColors.textMuted),
-            ),
-            SizedBox(height: 10.h),
-            OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
       );
 }

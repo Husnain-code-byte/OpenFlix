@@ -417,38 +417,56 @@ class StreamResolverController extends Notifier<StreamResolverState> {
     final s = q.season ?? 1;
     final e = q.episode ?? 1;
 
+    void addUnique(String id) {
+      if (id.isNotEmpty && !ids.contains(id)) ids.add(id);
+    }
+
     if (q.imdbId != null && q.imdbId!.isNotEmpty) {
-      ids.add(
-        q.mediaType == 'series' ? '${q.imdbId}:$s:$e' : q.imdbId!,
-      );
+      final cleanImdb = q.imdbId!.split(':').first.trim();
+      addUnique(q.mediaType == 'series' ? '$cleanImdb:$s:$e' : cleanImdb);
     }
     if (q.kitsuId != null) {
-      ids.add(
+      addUnique(
         q.mediaType == 'series'
             ? 'kitsu:${q.kitsuId}:$e'
             : 'kitsu:${q.kitsuId}',
       );
     }
     if (q.tmdbId != null) {
-      ids.add(
+      addUnique(
         q.mediaType == 'series' ? 'tmdb:${q.tmdbId}:$s:$e' : 'tmdb:${q.tmdbId}',
       );
     }
-    if (q.rawMetaId != null &&
-        q.rawMetaId!.isNotEmpty &&
-        !ids.contains(q.rawMetaId)) {
-      ids.add(
-        q.mediaType == 'series' && !q.rawMetaId!.contains(':') && q.season != null
-            ? '${q.rawMetaId}:$s:$e'
-            : q.rawMetaId!,
-      );
+    final raw = q.rawMetaId?.trim();
+    if (raw != null && raw.isNotEmpty) {
+      if (!raw.startsWith('raw:') && !raw.startsWith('tmdb:series:') && !raw.startsWith('tmdb:movie:')) {
+        var base = raw.startsWith('imdb:') ? raw.substring('imdb:'.length) : raw;
+        final parts = base.split(':');
+        if (q.mediaType == 'series') {
+          if (parts.length >= 3 &&
+              int.tryParse(parts[parts.length - 1]) != null &&
+              int.tryParse(parts[parts.length - 2]) != null) {
+            base = parts.sublist(0, parts.length - 2).join(':');
+          } else if (parts.length == 2 &&
+              parts[0].toLowerCase() == 'kitsu' &&
+              int.tryParse(parts[1]) != null) {
+            addUnique('kitsu:${parts[1]}:$e');
+            return ids;
+          }
+          if (base.isNotEmpty && !base.startsWith('anilist:')) {
+            addUnique('$base:$s:$e');
+          }
+        } else if (base.isNotEmpty && !base.startsWith('anilist:')) {
+          addUnique(base);
+        }
+      }
     }
     return ids;
   }
 
   static int _compareStreams(ResolvedStream a, ResolvedStream b) {
     final directDiff =
-        (b.transport.isPlayableDirect ? 1 : 0) - (a.transport.isPlayableDirect ? 1 : 0);
+        (b.canPlayInternally ? 1 : 0) - (a.canPlayInternally ? 1 : 0);
     if (directDiff != 0) return directDiff;
     final qDiff = b.qualityRank.compareTo(a.qualityRank);
     if (qDiff != 0) return qDiff;

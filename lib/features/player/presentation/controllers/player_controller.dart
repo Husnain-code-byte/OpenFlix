@@ -9,12 +9,14 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../addons/domain/models/stream_models.dart';
 import '../../../details/data/tmdb_models.dart';
 import '../../../details/data/tmdb_repository.dart';
 import '../../../preferences/domain/models/playback_preferences.dart';
 import '../../../preferences/presentation/controllers/playback_preferences_controller.dart';
 import '../../data/skip_segments_service.dart';
+import '../../data/stream_metadata_parser.dart';
 import '../../data/track_orchestrator.dart';
 import '../../domain/models/player_models.dart';
 import '../../domain/models/ranked_stream.dart';
@@ -36,9 +38,15 @@ class PlayerSessionController extends ChangeNotifier {
   static const _defaultUserAgent =
       'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
+  // Use `auto-copy` on Android so MediaCodec handles supported codecs via safe
+  // copy-back buffers (avoiding MediaTek SurfaceTexture deadlocks) and
+  // automatically falls back to FFmpeg software decoding for unsupported
+  // codecs/profiles (10-bit HEVC, AV1, VC-1, MPEG-2, H.264 Hi10P anime).
+  static const _stableAndroidHwdec = 'auto-copy';
 
   late Player _player;
   late VideoController _videoController;
+  late final Future<void> _mpvConfigReady;
   VideoController get videoController => _videoController;
 
   /// High-frequency timeline notifier (position / duration / buffered).
@@ -61,6 +69,10 @@ class PlayerSessionController extends ChangeNotifier {
 
   Duration get currentPosition => timelineNotifier.value.position;
   Duration get currentDuration => timelineNotifier.value.duration;
+  Duration get effectivePosition =>
+      _lastValidPosition > Duration.zero ? _lastValidPosition : currentPosition;
+  Duration get effectiveDuration =>
+      _lastValidDuration > Duration.zero ? _lastValidDuration : currentDuration;
 
   late final List<TmdbSeasonSummary> _seasons = [...initialArgs.seasons];
   late final Map<int, TmdbSeasonDetails> _seasonsCache = {
@@ -73,6 +85,7 @@ class PlayerSessionController extends ChangeNotifier {
   Timer? _stallWatchdog;
   Timer? _pauseScrapingTimer;
   Timer? _progressFlushTimer;
+  Timer? _videoStallTimer;
   Timer? _statusBannerTimer;
   Timer? _autoOutroCountdownTimer;
 
@@ -82,7 +95,26 @@ class PlayerSessionController extends ChangeNotifier {
   bool _tracksAppliedForOpen = false;
   bool _linksModalOpen = false;
   bool _awaitingResumedFallback = false;
+  bool _isOpeningStream = false;
+  bool _isRecoveringStream = false;
+  bool _isTransitioningEpisode = false;
+  bool _prematureEofDetected = false;
+  bool _hasReceivedDurationForOpen = false;
+  bool _wakelockEnabled = false;
+  bool _hwdecPreferred = true;
+  bool _fellBackToSoftwareForStream = false;
+  bool _checkingVideoStall = false;
+  int _consecutiveVideoStallTicks = 0;
   int _openGeneration = 0;
+  int _sameStreamRecoveryAttempts = 0;
+  static const int _maxSameStreamRecoveries = 2;
+
+  // Position & duration preservation across stalls, reloads, and premature EOF
+  Duration _lastValidPosition = Duration.zero;
+  Duration _lastValidDuration = Duration.zero;
+  Duration? _pendingPostOpenSeek;
+  bool _postOpenSeekDispatched = false;
+  Duration? _recoveryBaselinePos;
 
   // Skip segments & Next Episode promotion state
   List<SkipSegment> _onlineSkipSegments = const [];
@@ -93,11 +125,13 @@ class PlayerSessionController extends ChangeNotifier {
   bool _reachedNextEpisodePoint = false;
   int _skipFetchGeneration = 0;
   int _chaptersLoadedForGen = -1;
+  int _onlineSkipFetchedDurationSec = 0;
   int? _autoOutroSecondsLeft;
   SkipActionKind? _activeCountdownKind;
 
   // Switching / Failover memory
   final Set<String> _sessionFailedKeys = <String>{};
+  final Set<String> _previousEpisodeStreamKeys = <String>{};
   int _pendingResumeMs = 0;
   bool _wasPlayingBeforeSwitch = true;
 
@@ -119,18 +153,23 @@ class PlayerSessionController extends ChangeNotifier {
 
   void _init() {
     _pendingResumeMs = initialArgs.initialPositionMs;
+    if (initialArgs.initialPositionMs > 0) {
+      _lastValidPosition = Duration(milliseconds: initialArgs.initialPositionMs);
+    }
 
     final prefs =
         container.read(playbackPreferencesControllerProvider).valueOrNull ??
             const PlaybackPreferences();
+    _hwdecPreferred = prefs.hardwareDecoding;
     subtitleScaleNotifier.value = prefs.subtitleScale;
 
-    // Tight 12 MiB demuxer budget keeps RAM lean on 3 GB Android devices.
+    // 16 MiB forward demuxer budget keeps RAM lean on 3 GB Android devices
+    // (<0.7% RAM) while preventing high-bitrate 1080p video packet starvation.
     // libass: false routes decoded embedded & external subtitle text cleanly
     // through Flutter's native SubtitleView (reliable rendering + low RAM).
     _player = Player(
       configuration: const PlayerConfiguration(
-        bufferSize: 12 * 1024 * 1024,
+        bufferSize: 16 * 1024 * 1024,
         libass: false,
         logLevel: MPVLogLevel.error,
       ),
@@ -139,62 +178,160 @@ class PlayerSessionController extends ChangeNotifier {
       _player,
       configuration: VideoControllerConfiguration(
         enableHardwareAcceleration: prefs.hardwareDecoding,
-        // Prefer zero-copy MediaCodec surface decoding before CPU copy fallback.
-        hwdec: prefs.hardwareDecoding ? 'mediacodec,mediacodec-copy' : 'no',
+        // Use `auto-copy` so MediaCodec handles supported formats cleanly and
+        // automatically falls back to FFmpeg software decoding for exotic profiles.
+        hwdec: prefs.hardwareDecoding ? _stableAndroidHwdec : 'no',
       ),
     );
 
-    _configureNativeMpvProperties(prefs);
+    final initialStream = initialArgs.initialStream;
+    final hasPlayableInitial =
+        initialStream != null && initialStream.canPlayInternally;
+    if (hasPlayableInitial) {
+      // Lock BEFORE _bindPrefetch(fireImmediately: true) so cached prefetch
+      // snapshots never race and override the user-selected stream.
+      _hasStartedFirstOpen = true;
+      _userLockedStream = true;
+    }
+
+    _mpvConfigReady = _configureNativeMpvProperties(prefs);
     _attachPlayerListeners();
+    _syncWakelock();
     _startProgressFlushTimer();
+    _startVideoStallMonitor();
     _bindPrefetch(_state.query);
+
+    if (hasPlayableInitial) {
+      final rankedInitial = RankedStream(
+        stream: initialStream,
+        meta: StreamMetadataParser.parse(
+          initialStream,
+          mediaTitle: _state.query.title,
+        ),
+        languageMatchTier: LanguageMatchTier.originalOrUnknown,
+        compositeScore: 1000,
+        isAutoPlayEligible: true,
+      );
+      unawaited(
+        _openRankedStream(
+          rankedInitial,
+          startPosition: Duration(milliseconds: _pendingResumeMs),
+          play: true,
+        ),
+      );
+    }
   }
 
-  void _configureNativeMpvProperties(PlaybackPreferences prefs) {
+  Future<void> _configureNativeMpvProperties(PlaybackPreferences prefs) async {
     final platform = _player.platform;
-    if (platform is NativePlayer) {
-      Future<void> safeSet(String k, String v) async {
-        try {
-          await platform.setProperty(k, v);
-        } catch (_) {}
-      }
+    if (platform is! NativePlayer) return;
 
-      unawaited(safeSet('network-timeout', '15'));
-      unawaited(safeSet('reconnect', 'yes'));
-      // Strict demuxer memory ceiling so mpv never starves a 3 GB phone.
-      unawaited(safeSet('demuxer-max-bytes', '12MiB'));
-      unawaited(safeSet('demuxer-max-back-bytes', '4MiB'));
-      unawaited(safeSet('demuxer-readahead-secs', '10'));
-      unawaited(safeSet('cache-secs', '10'));
-      // Smooth playback on mobile SoCs (PowerVR / Mali / Adreno):
-      // lightweight bilinear GPU scaling & frame dropping to keep A/V locked.
-      unawaited(safeSet('framedrop', 'vo'));
-      unawaited(safeSet('vd-lavc-fast', 'yes'));
-      unawaited(safeSet('vd-lavc-skiploopfilter', 'nonref'));
-      unawaited(safeSet('vd-lavc-threads', '4'));
-      unawaited(safeSet('scale', 'bilinear'));
-      unawaited(safeSet('cscale', 'bilinear'));
-      unawaited(safeSet('dscale', 'bilinear'));
-      unawaited(safeSet('correct-downscaling', 'no'));
-      unawaited(safeSet('dither-depth', 'no'));
-      unawaited(safeSet('sub-auto', 'no'));
-      unawaited(safeSet('sub-visibility', 'yes'));
-      unawaited(safeSet('sub-scale', prefs.subtitleScale.toStringAsFixed(2)));
+    Future<void> safeSet(String k, String v) async {
+      if (_disposed) return;
+      try {
+        await platform.setProperty(k, v);
+      } catch (_) {}
     }
+
+    const lavfReconnectOpts =
+        'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,'
+        'reconnect_on_http_error=5xx,reconnect_delay_max=5';
+
+    // Preserve media_kit's protocol_whitelist / allowed_extensions in demuxer-lavf-o
+    // while appending FFmpeg reconnect flags so HLS segment fetches also reconnect.
+    final demuxerLavfOpts = [
+      'seg_max_retry=5',
+      'strict=experimental',
+      'allowed_extensions=ALL',
+      'protocol_whitelist=[${platform.configuration.protocolWhitelist.join(',')}]',
+      lavfReconnectOpts,
+    ].join(',');
+
+    // Resilient network & EOF handling:
+    // - keep-open=yes keeps the frame/state alive instead of closing on EOF.
+    // - network-timeout=20 overrides media_kit's aggressive 5s default.
+    // - stream-lavf-o & demuxer-lavf-o enable FFmpeg HTTP/TCP & HLS auto-reconnect.
+    await Future.wait([
+      safeSet('keep-open', 'yes'),
+      safeSet('network-timeout', '20'),
+      safeSet('stream-lavf-o', lavfReconnectOpts),
+      safeSet('demuxer-lavf-o', demuxerLavfOpts),
+      safeSet('force-seekable', 'yes'),
+      // Strict 16 MiB / 4 MiB RAM cache ceiling so mpv never starves a 3 GB
+      // phone while preventing video packet starvation on 1080p streams and
+      // avoiding Android disk-cache I/O stalls.
+      safeSet('cache', 'yes'),
+      safeSet('cache-on-disk', 'no'),
+      safeSet('cache-pause', 'yes'),
+      safeSet('cache-pause-wait', '3'),
+      safeSet('demuxer-max-bytes', '16MiB'),
+      safeSet('demuxer-max-back-bytes', '4MiB'),
+      safeSet('demuxer-readahead-secs', '20'),
+      safeSet('cache-secs', '20'),
+      // Video/audio sync & Android hardware-decoder freeze prevention:
+      // - video-sync=audio locks video presentation to audio clock (immune to
+      //   Oplus/Android VRR refresh-rate changes).
+      // - framedrop=vo + hr-seek-framedrop=yes drop late frames cleanly instead
+      //   of freezing for seconds during catch-up/seeks (overrides media_kit's
+      //   hr-seek-framedrop=no).
+      // - vd-lavc-dr=no & opengl-pbo=no prevent MediaTek/Mali buffer-pool and
+      //   GLES upload deadlocks.
+      // - correct-pts=yes ensures accurate frame timing on B-frame/VFR streams.
+      safeSet('video-sync', 'audio'),
+      safeSet('framedrop', 'vo'),
+      safeSet('hr-seek-framedrop', 'yes'),
+      safeSet('correct-pts', 'yes'),
+      safeSet('hwdec-extra-frames', '4'),
+      safeSet('vd-lavc-dr', 'no'),
+      safeSet('opengl-pbo', 'no'),
+      safeSet('vd-lavc-fast', 'yes'),
+      safeSet('vd-lavc-skiploopfilter', 'nonref'),
+      safeSet('vd-lavc-threads', '0'),
+      // Lightweight mobile HDR tone-mapping so 10-bit HDR10/HLG streams look
+      // natural on SDR phone panels without stalling low-end mobile GPUs.
+      safeSet('tone-mapping', 'reinhard'),
+      safeSet('hdr-compute-peak', 'no'),
+      safeSet('scale', 'bilinear'),
+      safeSet('cscale', 'bilinear'),
+      safeSet('dscale', 'bilinear'),
+      safeSet('correct-downscaling', 'no'),
+      safeSet('dither-depth', 'no'),
+      // Universal mobile audio decoding (AC3, E-AC3/Atmos, DTS, DTS-HD, TrueHD,
+      // FLAC, Opus, 5.1/7.1): disable raw bitstream passthrough and downmix
+      // cleanly to normalized stereo so Android AudioTrack/OpenSL ES never
+      // rejects or clips surround tracks.
+      safeSet('audio-spdif', ''),
+      safeSet('audio-channels', 'stereo'),
+      safeSet('ad-lavc-downmix', 'yes'),
+      safeSet('audio-normalize-downmix', 'yes'),
+      // Subtitles: expose embedded SRT/ASS/PGS/VobSub and preserve ASS styling.
+      safeSet('sub-auto', 'no'),
+      safeSet('sub-visibility', 'yes'),
+      safeSet('sub-ass-override', 'no'),
+      safeSet('sub-scale', prefs.subtitleScale.toStringAsFixed(2)),
+    ]);
+  }
+
+  bool _isNearGenuineEnd(Duration pos, Duration dur) {
+    if (dur <= Duration.zero) return false;
+    final remaining = dur - pos;
+    final frac = pos.inMilliseconds / dur.inMilliseconds;
+    return remaining <= const Duration(seconds: 15) || frac >= 0.97;
   }
 
   void _attachPlayerListeners() {
     _subs.add(
       _player.stream.playing.listen((playing) {
         if (_disposed) return;
-        _updateWakelock(playing);
         _setState(_state.copyWith(isPlaying: playing));
+        _syncWakelock();
         if (playing) {
+          _prematureEofDetected = false;
           _maybeSchedulePauseBackgroundScraping();
-          _evaluateActiveSkipSegment(currentPosition);
+          _evaluateActiveSkipSegment(effectivePosition);
         } else {
           _cancelAutoOutroCountdown();
-          if (currentDuration > Duration.zero) {
+          if (effectiveDuration > Duration.zero && !_isOpeningStream) {
             unawaited(flushProgress());
           }
         }
@@ -205,7 +342,8 @@ class PlayerSessionController extends ChangeNotifier {
       _player.stream.buffering.listen((buffering) {
         if (_disposed) return;
         _setState(_state.copyWith(isBuffering: buffering));
-        if (!buffering && currentDuration > Duration.zero) {
+        _syncWakelock();
+        if (!buffering && effectiveDuration > Duration.zero) {
           _stallWatchdog?.cancel();
           if (_state.isInitializing || _state.isSwitchingSource) {
             _setState(
@@ -223,27 +361,82 @@ class PlayerSessionController extends ChangeNotifier {
     _subs.add(
       _player.stream.position.listen((pos) {
         if (_disposed) return;
+
+        // Ignore spurious Duration.zero emissions during buffering, reload,
+        // stream open/stop, or error transitions once we have valid progress.
+        if (pos == Duration.zero) {
+          if (_lastValidPosition > Duration.zero ||
+              _isOpeningStream ||
+              _isRecoveringStream ||
+              _state.isBuffering ||
+              _state.isSwitchingSource) {
+            return;
+          }
+          if (timelineNotifier.value.position != Duration.zero) {
+            timelineNotifier.value =
+                timelineNotifier.value.copyWith(position: Duration.zero);
+          }
+          return;
+        }
+
+        // If a resume/recovery open intended to start at a saved timestamp,
+        // but the remote server ignored mpv's `start=` option and started near
+        // 00:00, force a one-shot seek back to the saved timestamp and ignore
+        // early low-position ticks while the seek is in flight so
+        // _lastValidPosition is never clobbered.
+        final pendingSeek = _pendingPostOpenSeek;
+        if (pendingSeek != null) {
+          if (pos < const Duration(seconds: 4) &&
+              pendingSeek > const Duration(seconds: 5)) {
+            if (!_postOpenSeekDispatched) {
+              _postOpenSeekDispatched = true;
+              unawaited(_player.seek(pendingSeek));
+            }
+            if (timelineNotifier.value.position != pendingSeek) {
+              timelineNotifier.value =
+                  timelineNotifier.value.copyWith(position: pendingSeek);
+            }
+            return;
+          }
+          _pendingPostOpenSeek = null;
+          _postOpenSeekDispatched = false;
+        }
+
+        final previousResumeMs = _pendingResumeMs;
+        _lastValidPosition = pos;
+        _pendingResumeMs = pos.inMilliseconds;
+
+        // Once playback advances cleanly for >=5s after recovery, reset the
+        // same-stream recovery budget so later transient hiccups can recover.
+        final baseline = _recoveryBaselinePos;
+        if (baseline != null &&
+            _state.isPlaying &&
+            !_state.isBuffering &&
+            (pos - baseline).abs() >= const Duration(seconds: 5)) {
+          _recoveryBaselinePos = null;
+          _sameStreamRecoveryAttempts = 0;
+        }
+
         final cur = timelineNotifier.value;
         // Throttle tiny sub-250ms jitters to reduce seekbar repaints.
-        if ((pos - cur.position).abs() >= const Duration(milliseconds: 250) ||
-            pos == Duration.zero) {
+        if ((pos - cur.position).abs() >= const Duration(milliseconds: 250)) {
           timelineNotifier.value = cur.copyWith(position: pos);
         }
-        if (pos > Duration.zero) {
-          if (pos.inMilliseconds != _pendingResumeMs &&
-              (_state.isInitializing || _state.isSwitchingSource)) {
-            _stallWatchdog?.cancel();
-          }
-          if (_state.isInitializing || _state.isSwitchingSource) {
-            _setState(
-              _state.copyWith(
-                isInitializing: false,
-                isSwitchingSource: false,
-              ),
-            );
-          }
-          _maybeSchedulePauseBackgroundScraping();
+
+        if (pos.inMilliseconds != previousResumeMs &&
+            (_state.isInitializing || _state.isSwitchingSource)) {
+          _stallWatchdog?.cancel();
         }
+        if (_state.isInitializing || _state.isSwitchingSource) {
+          _setState(
+            _state.copyWith(
+              isInitializing: false,
+              isSwitchingSource: false,
+            ),
+          );
+          _syncWakelock();
+        }
+        _maybeSchedulePauseBackgroundScraping();
         _maybePrefetchNextEpisode();
         _evaluateActiveSkipSegment(pos);
       }),
@@ -252,13 +445,29 @@ class PlayerSessionController extends ChangeNotifier {
     _subs.add(
       _player.stream.duration.listen((dur) {
         if (_disposed) return;
+
+        // Ignore transient Duration.zero resets during reloads/recoveries so
+        // the seekbar and remaining time do not collapse to 00:00.
+        if (dur <= Duration.zero) {
+          if (_lastValidDuration > Duration.zero &&
+              (_isOpeningStream ||
+                  _isRecoveringStream ||
+                  _state.isSwitchingSource)) {
+            return;
+          }
+          if (_lastValidDuration == Duration.zero) {
+            timelineNotifier.value =
+                timelineNotifier.value.copyWith(duration: Duration.zero);
+          }
+          return;
+        }
+
         // Instant TMDB runtime verification: reject trailers or wrong movies/episodes
         // as soon as mpv reads container headers (<500ms), hide the bad link from
         // the Links sheet, and switch cleanly to the next valid link.
         final active = _state.activeStream;
         final expectedMin = _state.query.expectedRuntimeMinutes;
-        if (dur > Duration.zero &&
-            active != null &&
+        if (active != null &&
             expectedMin != null &&
             expectedMin > 0 &&
             !isDurationCompatibleWithRuntime(dur.inSeconds, expectedMin)) {
@@ -273,25 +482,35 @@ class PlayerSessionController extends ChangeNotifier {
           return;
         }
 
+        _hasReceivedDurationForOpen = true;
+        _lastValidDuration = dur;
         timelineNotifier.value = timelineNotifier.value.copyWith(duration: dur);
-        if (dur > Duration.zero) {
-          _stallWatchdog?.cancel();
-          if (_state.isInitializing || _state.isSwitchingSource) {
-            _setState(
-              _state.copyWith(
-                isInitializing: false,
-                isSwitchingSource: false,
-              ),
-            );
-          }
-          _maybeSchedulePauseBackgroundScraping();
-          if (_chaptersLoadedForGen != _openGeneration) {
-            _chaptersLoadedForGen = _openGeneration;
-            unawaited(_readEmbeddedChapters(_openGeneration, dur.inMilliseconds));
-          }
-          _rebuildMergedSkipSegments();
-          _evaluateActiveSkipSegment(currentPosition);
+        _stallWatchdog?.cancel();
+        if (_state.isInitializing || _state.isSwitchingSource) {
+          _setState(
+            _state.copyWith(
+              isInitializing: false,
+              isSwitchingSource: false,
+            ),
+          );
+          _syncWakelock();
         }
+        _maybeSchedulePauseBackgroundScraping();
+        if (_chaptersLoadedForGen != _openGeneration) {
+          _chaptersLoadedForGen = _openGeneration;
+          unawaited(_readEmbeddedChapters(_openGeneration, dur.inMilliseconds));
+        }
+        // Re-fetch online skip timestamps (especially AniSkip) once the exact
+        // video container duration is known so release-cut matching is accurate.
+        if (dur.inSeconds > 0 &&
+            (_onlineSkipFetchedDurationSec <= 0 ||
+                (dur.inSeconds - _onlineSkipFetchedDurationSec).abs() > 10)) {
+          unawaited(
+            _fetchOnlineSkipSegments(_state.query, durationSec: dur.inSeconds),
+          );
+        }
+        _rebuildMergedSkipSegments();
+        _evaluateActiveSkipSegment(effectivePosition);
       }),
     );
 
@@ -317,11 +536,62 @@ class PlayerSessionController extends ChangeNotifier {
         if (_disposed) return;
         if (err.trim().isEmpty) return;
         debugPrint('Player error: $err');
-        if (_state.activeStream != null &&
-            (_state.isInitializing ||
-                _state.isSwitchingSource ||
-                _state.isBuffering ||
-                currentDuration == Duration.zero)) {
+        if (_state.activeStream == null || _isRecoveringStream) return;
+
+        final lowerErr = err.toLowerCase();
+
+        // Never let a broken/unreachable external subtitle URL disrupt active
+        // video playback.
+        if (_hasReceivedDurationForOpen &&
+            (lowerErr.contains('sub') ||
+                lowerErr.contains('.srt') ||
+                lowerErr.contains('.vtt') ||
+                lowerErr.contains('.ass')) &&
+            !lowerErr.contains('video') &&
+            !lowerErr.contains('audio') &&
+            !lowerErr.contains('demux')) {
+          return;
+        }
+
+        // If hardware video decoding errors (common on Android MediaCodec with
+        // 10-bit HEVC, H.264 Hi10P, AV1, or MediaTek profiles), automatically
+        // retry this same stream once with pure software decoding (`hwdec=no`)
+        // at `_lastValidPosition` before giving up or failing over.
+        if (_hwdecPreferred &&
+            !_fellBackToSoftwareForStream &&
+            _isDecoderError(lowerErr)) {
+          final needsReopen = !_hasReceivedDurationForOpen ||
+              (_player.state.width ?? 0) <= 0 ||
+              _state.isInitializing ||
+              _state.isSwitchingSource;
+          unawaited(
+            _fallbackToSoftwareDecoding(
+              reason: 'decoder error',
+              forceReopen: needsReopen,
+            ),
+          );
+          return;
+        }
+
+        // During initial open or source switch (before valid playback starts),
+        // fail over immediately as before.
+        if (_state.isInitializing ||
+            _state.isSwitchingSource ||
+            _lastValidDuration == Duration.zero) {
+          _handleActiveStreamFailure('Playback error: $err');
+          return;
+        }
+
+        // Mid-stream error during active playback: try reconnecting the same
+        // stream at _lastValidPosition before failing over or showing an error.
+        if (_sameStreamRecoveryAttempts < _maxSameStreamRecoveries &&
+            effectivePosition > Duration.zero) {
+          unawaited(
+            _recoverActiveStreamAtLastPosition(
+              play: _state.isPlaying || _state.isBuffering,
+            ),
+          );
+        } else if (_state.isBuffering) {
           _handleActiveStreamFailure('Playback error: $err');
         }
       }),
@@ -330,6 +600,31 @@ class PlayerSessionController extends ChangeNotifier {
     _subs.add(
       _player.stream.completed.listen((done) {
         if (_disposed || !done) return;
+        if (_isOpeningStream || _isRecoveringStream) return;
+
+        final dur = effectiveDuration;
+        final pos = effectivePosition;
+
+        // Guard against premature EOF caused by transient HTTP/HLS drops:
+        // mpv sets eof-reached=true (which pauses playback and marks
+        // media_kit's state.completed=true). Never mark the title finished or
+        // let a subsequent Play tap reset to 00:00 — seamlessly recover at pos!
+        if (dur > Duration.zero && !_isNearGenuineEnd(pos, dur)) {
+          debugPrint(
+            'Premature EOF detected at ${pos.inSeconds}s / ${dur.inSeconds}s — recovering stream',
+          );
+          _prematureEofDetected = true;
+          unawaited(flushProgress());
+          if (_state.activeStream != null &&
+              _sameStreamRecoveryAttempts < _maxSameStreamRecoveries) {
+            unawaited(_recoverActiveStreamAtLastPosition(play: true));
+          } else {
+            _handleActiveStreamFailure('Stream connection dropped');
+          }
+          return;
+        }
+
+        _prematureEofDetected = false;
         unawaited(flushProgress(forceCompleted: true));
         final prefs =
             container.read(playbackPreferencesControllerProvider).valueOrNull ??
@@ -407,14 +702,34 @@ class PlayerSessionController extends ChangeNotifier {
     );
   }
 
-  void _updateWakelock(bool playing) {
+  void _syncWakelock({bool force = false}) {
+    final shouldHold = !_disposed &&
+        _state.errorMessage == null &&
+        (_state.isPlaying ||
+            _state.isInitializing ||
+            _state.isSwitchingSource ||
+            _isOpeningStream ||
+            _isRecoveringStream ||
+            _state.isBuffering);
+    _updateWakelock(shouldHold, force: force);
+  }
+
+  void _updateWakelock(bool enable, {bool force = false}) {
+    if (!force && _wakelockEnabled == enable) return;
+    _wakelockEnabled = enable;
     try {
-      if (playing) {
+      if (enable) {
         unawaited(WakelockPlus.enable());
       } else {
         unawaited(WakelockPlus.disable());
       }
     } catch (_) {}
+  }
+
+  /// Called when the app returns to foreground so screen wake lock stays synced.
+  void onAppResumed() {
+    if (_disposed) return;
+    _syncWakelock(force: true);
   }
 
   void _startProgressFlushTimer() {
@@ -424,6 +739,161 @@ class PlayerSessionController extends ChangeNotifier {
         unawaited(flushProgress());
       }
     });
+  }
+
+  /// Periodically checks libmpv's `avsync` drift while playing with hardware
+  /// decoding enabled. If the video decoder stalls >=1.8s behind the audio
+  /// clock for 2 consecutive checks (6s) while audio keeps playing, cleanly
+  /// falls back to software decoding (`hwdec=no`) and re-syncs playback.
+  void _startVideoStallMonitor() {
+    _videoStallTimer?.cancel();
+    _videoStallTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      unawaited(_checkVideoSyncHealth());
+    });
+  }
+
+  bool _isDecoderError(String lowerErr) {
+    return lowerErr.contains('mediacodec') ||
+        lowerErr.contains('hwdec') ||
+        lowerErr.contains('c2.mtk') ||
+        lowerErr.contains('amc') ||
+        lowerErr.contains('video decoder') ||
+        lowerErr.contains('avcodec') ||
+        lowerErr.contains('codec') ||
+        lowerErr.contains('vo_gpu') ||
+        lowerErr.contains('error decoding');
+  }
+
+  Future<void> _checkVideoSyncHealth() async {
+    if (_disposed ||
+        _checkingVideoStall ||
+        !_hwdecPreferred ||
+        _fellBackToSoftwareForStream ||
+        !_state.isPlaying ||
+        _state.isBuffering ||
+        _state.isInitializing ||
+        _state.isSwitchingSource ||
+        _isOpeningStream ||
+        _isRecoveringStream ||
+        _isTransitioningEpisode) {
+      _consecutiveVideoStallTicks = 0;
+      return;
+    }
+
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+
+    _checkingVideoStall = true;
+    try {
+      // Detect black-screen / no-video-frames hardware decode failure where
+      // audio and timeline advance normally but video width stays 0/null.
+      final hasVideoTrack = _player.state.tracks.video
+          .any((v) => v.id != 'auto' && v.id != 'no');
+      final width = _player.state.width ?? 0;
+      if (hasVideoTrack &&
+          width <= 0 &&
+          effectiveDuration > Duration.zero &&
+          effectivePosition > const Duration(seconds: 2)) {
+        _consecutiveVideoStallTicks++;
+        if (_consecutiveVideoStallTicks >= 2) {
+          _consecutiveVideoStallTicks = 0;
+          await _fallbackToSoftwareDecoding(
+            reason: 'no video frames from hwdec',
+            forceReopen: true,
+          );
+        }
+        return;
+      }
+
+      final hwdecCurrent = (await platform.getProperty('hwdec-current')).trim();
+      if (hwdecCurrent.isEmpty || hwdecCurrent == 'no') {
+        _consecutiveVideoStallTicks = 0;
+        return;
+      }
+      final rawSync = (await platform.getProperty('avsync')).trim();
+      final avsync = double.tryParse(rawSync);
+      if (avsync != null && avsync.abs() >= 1.8) {
+        _consecutiveVideoStallTicks++;
+        if (_consecutiveVideoStallTicks >= 2) {
+          _consecutiveVideoStallTicks = 0;
+          await _fallbackToSoftwareDecoding(
+            reason: 'hwdec stall (avsync=${avsync.toStringAsFixed(2)}s)',
+          );
+        }
+      } else {
+        _consecutiveVideoStallTicks = 0;
+      }
+    } catch (_) {
+      _consecutiveVideoStallTicks = 0;
+    } finally {
+      _checkingVideoStall = false;
+    }
+  }
+
+  Future<void> _fallbackToSoftwareDecoding({
+    required String reason,
+    bool forceReopen = false,
+  }) async {
+    if (_disposed || _fellBackToSoftwareForStream) return;
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+
+    _fellBackToSoftwareForStream = true;
+    _consecutiveVideoStallTicks = 0;
+    debugPrint('Video hardware decode fallback to software: $reason');
+
+    try {
+      await platform.setProperty('hwdec', 'no');
+      final pos = effectivePosition;
+      final active = _state.activeStream;
+      final shouldReopen =
+          forceReopen || !_hasReceivedDurationForOpen || (_player.state.width ?? 0) <= 0;
+
+      if (shouldReopen && active != null && !_isRecoveringStream) {
+        _isRecoveringStream = true;
+        _pendingResumeMs = pos.inMilliseconds;
+        _showStatusBanner('Retrying with software decoding...');
+        _setState(
+          _state.copyWith(
+            isSwitchingSource: true,
+            isBuffering: true,
+            clearError: true,
+          ),
+        );
+        _syncWakelock();
+        try {
+          await _openRankedStream(
+            active,
+            startPosition: pos,
+            play: true,
+            isRecovery: true,
+          );
+        } finally {
+          _isRecoveringStream = false;
+        }
+        return;
+      }
+
+      if (!_disposed && pos > Duration.zero) {
+        await _player.seek(pos);
+      }
+      if (!_disposed) {
+        _showStatusBanner('Switched to smooth software decoding');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _restorePreferredHwdecIfNeeded() async {
+    if (!_fellBackToSoftwareForStream) return;
+    _fellBackToSoftwareForStream = false;
+    _consecutiveVideoStallTicks = 0;
+    if (!_hwdecPreferred) return;
+    final platform = _player.platform;
+    if (platform is NativePlayer) {
+      try {
+        await platform.setProperty('hwdec', _stableAndroidHwdec);
+      } catch (_) {}
+    }
   }
 
   void _bindPrefetch(StreamQuery query) {
@@ -550,18 +1020,28 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   void _onPrefetchSnapshot(PrefetchSnapshot snap) {
-    if (_disposed || snap.key != _currentPrefetchKey) return;
+    if (_disposed ||
+        _isTransitioningEpisode ||
+        snap.key != _currentPrefetchKey) {
+      return;
+    }
+    if (snap.query.season != _state.query.season ||
+        snap.query.episode != _state.query.episode) {
+      return;
+    }
 
     final filteredRanked = snap.rankedStreams;
+    final mergedExternalSubs = _mergedExternalSubtitles(snap);
     final subOpts = TrackOrchestrator.buildSubtitleOptions(
       _player.state.tracks.subtitle,
-      snap.subtitles,
+      mergedExternalSubs,
     );
 
     _setState(
       _state.copyWith(
         isResolvingLinks: snap.isResolving || snap.isProbing,
         hasMoreSources: snap.hasMoreProviders,
+        hasAnyStreamAddon: snap.hasAnyStreamAddon,
         rankedStreams: filteredRanked,
         subtitleOptions: subOpts,
       ),
@@ -570,7 +1050,7 @@ class PlayerSessionController extends ChangeNotifier {
     if (_tracksAppliedForOpen &&
         !_userManualSubOverride &&
         _state.selectedSubtitleId == 'off' &&
-        snap.subtitles.isNotEmpty) {
+        mergedExternalSubs.isNotEmpty) {
       final prefs =
           container.read(playbackPreferencesControllerProvider).valueOrNull ??
               const PlaybackPreferences();
@@ -592,7 +1072,9 @@ class PlayerSessionController extends ChangeNotifier {
     if (_awaitingResumedFallback && !_userLockedStream) {
       final freshCandidate = filteredRanked
           .where((r) =>
-              r.isAutoPlayEligible && !_sessionFailedKeys.contains(r.dedupKey))
+              r.isAutoPlayEligible &&
+              !_sessionFailedKeys.contains(r.dedupKey) &&
+              !_previousEpisodeStreamKeys.contains(r.dedupKey))
           .firstOrNull;
       if (freshCandidate != null) {
         _awaitingResumedFallback = false;
@@ -608,13 +1090,15 @@ class PlayerSessionController extends ChangeNotifier {
       }
       if (!snap.isResolving && !snap.isProbing) {
         _awaitingResumedFallback = false;
+        final mapped = snap.hasAnyStreamAddon
+            ? UserError.noStreams()
+            : UserError.noAddons();
         _setState(
           _state.copyWith(
             isInitializing: false,
             isSwitchingSource: false,
             isBuffering: false,
-            errorMessage:
-                'No working streams found. Tap Links to inspect all sources.',
+            error: mapped,
           ),
         );
       }
@@ -656,17 +1140,33 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   void _tryStartFirstPlayable(PrefetchSnapshot snap) {
-    if (_disposed || _hasStartedFirstOpen) return;
-    final best = snap.bestPlayableStream;
+    if (_disposed || _hasStartedFirstOpen || _isTransitioningEpisode) return;
+    if (snap.key != _currentPrefetchKey ||
+        snap.query.season != _state.query.season ||
+        snap.query.episode != _state.query.episode) {
+      return;
+    }
+
+    bool isAllowedForEpisode(RankedStream r) =>
+        r.stream.canPlayInternally &&
+        !_sessionFailedKeys.contains(r.dedupKey) &&
+        !_previousEpisodeStreamKeys.contains(r.dedupKey);
+
+    final primaryBest = snap.bestPlayableStream;
+    final best = (primaryBest != null && isAllowedForEpisode(primaryBest))
+        ? primaryBest
+        : snap.rankedStreams.where(isAllowedForEpisode).firstOrNull;
     if (best == null) {
       _hasStartedFirstOpen = true;
+      final mapped = snap.hasAnyStreamAddon
+          ? UserError.noStreams()
+          : UserError.noAddons();
       _setState(
         _state.copyWith(
           isInitializing: false,
           isResolvingLinks: false,
-          errorMessage: snap.hasAnyStreamAddon
-              ? 'No direct streams found for this title. Tap Links to inspect available sources or torrents.'
-              : 'No stream addons enabled yet. Install an official CloudStream repo or Stremio addon in Addons.',
+          hasAnyStreamAddon: snap.hasAnyStreamAddon,
+          error: mapped,
         ),
       );
       return;
@@ -686,14 +1186,32 @@ class PlayerSessionController extends ChangeNotifier {
     RankedStream candidate, {
     required Duration startPosition,
     required bool play,
+    bool isRecovery = false,
   }) async {
-    final url = candidate.stream.url;
+    final url = candidate.stream.internalPlayableUrl;
     if (url == null || url.isEmpty) {
       _handleActiveStreamFailure('Invalid stream URL');
       return;
     }
 
+    // Guard against accidental re-opening of an already healthy active stream
+    // (e.g., duplicate callbacks or UI lifecycle triggers).
+    if (!isRecovery &&
+        _state.activeStream?.dedupKey == candidate.dedupKey &&
+        _hasReceivedDurationForOpen &&
+        !_player.state.completed &&
+        !_prematureEofDetected) {
+      if (play && !_state.isPlaying) {
+        await _player.play();
+      }
+      return;
+    }
+
     final gen = ++_openGeneration;
+    final targetPrefetchKey = _currentPrefetchKey;
+    _isOpeningStream = true;
+    _hasReceivedDurationForOpen = false;
+    _prematureEofDetected = false;
     _tracksAppliedForOpen = false;
     _embeddedSkipSegments = const [];
     _chaptersLoadedForGen = -1;
@@ -702,14 +1220,27 @@ class PlayerSessionController extends ChangeNotifier {
     _pauseScrapingTimer?.cancel();
     _pauseScrapingTimer = null;
 
-    final headers = <String, String>{
-      'User-Agent': _defaultUserAgent,
-      ...candidate.stream.headers,
-      if (candidate.stream.referer != null &&
-          candidate.stream.referer!.trim().isNotEmpty &&
-          !candidate.stream.headers.containsKey('Referer'))
-        'Referer': candidate.stream.referer!.trim(),
-    };
+    if (!isRecovery) {
+      _sameStreamRecoveryAttempts = 0;
+      _recoveryBaselinePos = null;
+      _consecutiveVideoStallTicks = 0;
+      unawaited(_restorePreferredHwdecIfNeeded());
+    }
+
+    final effectiveStart =
+        startPosition > Duration.zero ? startPosition : Duration.zero;
+    _postOpenSeekDispatched = false;
+    if (effectiveStart > Duration.zero) {
+      _lastValidPosition = effectiveStart;
+      _pendingResumeMs = effectiveStart.inMilliseconds;
+      _pendingPostOpenSeek = effectiveStart;
+    } else {
+      _pendingPostOpenSeek = null;
+    }
+
+    final headers = candidate.stream.buildRequestHeaders(
+      defaultUserAgent: _defaultUserAgent,
+    );
 
     _setState(
       _state.copyWith(
@@ -718,12 +1249,24 @@ class PlayerSessionController extends ChangeNotifier {
         clearError: true,
       ),
     );
+    _syncWakelock();
 
-    _stallWatchdog = Timer(const Duration(seconds: 7), () {
+    // Ensure resilient libmpv network/cache properties are applied before the
+    // first HTTP/HLS request is issued.
+    await _mpvConfigReady;
+    if (_disposed ||
+        gen != _openGeneration ||
+        _currentPrefetchKey != targetPrefetchKey) {
+      return;
+    }
+
+    final watchdogTimeout =
+        isRecovery ? const Duration(seconds: 10) : const Duration(seconds: 7);
+    _stallWatchdog = Timer(watchdogTimeout, () {
       if (_disposed || gen != _openGeneration) return;
-      final stalledAtStart = currentDuration == Duration.zero ||
+      final stalledAtStart = !_hasReceivedDurationForOpen ||
           (_state.isBuffering &&
-              (currentPosition - startPosition).abs() <
+              (_player.state.position - effectiveStart).abs() <
                   const Duration(seconds: 1));
       if (stalledAtStart &&
           (_state.isInitializing || _state.isSwitchingSource)) {
@@ -736,17 +1279,64 @@ class PlayerSessionController extends ChangeNotifier {
         Media(
           url,
           httpHeaders: headers,
-          start: startPosition > Duration.zero ? startPosition : null,
+          start: effectiveStart > Duration.zero ? effectiveStart : null,
         ),
         play: play,
       );
-      if (play && _state.playbackSpeed != 1.0) {
+      if (play && _state.playbackSpeed != 1.0 && !_disposed && gen == _openGeneration) {
         await _player.setRate(_state.playbackSpeed);
       }
     } catch (e) {
       if (!_disposed && gen == _openGeneration) {
         _handleActiveStreamFailure(e.toString());
       }
+    } finally {
+      if (gen == _openGeneration) {
+        _isOpeningStream = false;
+      }
+    }
+  }
+
+  /// Seamlessly reloads the current stream at [_lastValidPosition] after a
+  /// premature network EOF or dropped HTTP/HLS connection.
+  Future<void> _recoverActiveStreamAtLastPosition({
+    required bool play,
+    bool resetRetryBudget = false,
+  }) async {
+    if (_disposed || _isRecoveringStream) return;
+    final active = _state.activeStream;
+    if (active == null) return;
+
+    if (resetRetryBudget) {
+      _sameStreamRecoveryAttempts = 0;
+    }
+    _sameStreamRecoveryAttempts++;
+    _isRecoveringStream = true;
+    _prematureEofDetected = false;
+
+    final resumePos = effectivePosition;
+    _pendingResumeMs = resumePos.inMilliseconds;
+    _recoveryBaselinePos = resumePos;
+
+    _showStatusBanner('Reconnecting stream...');
+    _setState(
+      _state.copyWith(
+        isSwitchingSource: true,
+        isBuffering: true,
+        clearError: true,
+      ),
+    );
+    _syncWakelock();
+
+    try {
+      await _openRankedStream(
+        active,
+        startPosition: resumePos,
+        play: play,
+        isRecovery: true,
+      );
+    } finally {
+      _isRecoveringStream = false;
     }
   }
 
@@ -757,6 +1347,29 @@ class PlayerSessionController extends ChangeNotifier {
     _stallWatchdog?.cancel();
     _pauseScrapingTimer?.cancel();
     _pauseScrapingTimer = null;
+
+    // Before failing over or surfacing a decoder error, automatically retry
+    // the same stream once in pure software decode mode (`hwdec=no`) at
+    // `_lastValidPosition`.
+    if (!forceFailover &&
+        _hwdecPreferred &&
+        !_fellBackToSoftwareForStream &&
+        _state.activeStream != null &&
+        _isDecoderError(reason.toLowerCase())) {
+      unawaited(
+        _fallbackToSoftwareDecoding(
+          reason: reason,
+          forceReopen: true,
+        ),
+      );
+      return;
+    }
+
+    final savedPos = effectivePosition;
+    final resumeMs = savedPos > Duration.zero
+        ? savedPos.inMilliseconds
+        : _pendingResumeMs;
+    _pendingResumeMs = resumeMs;
 
     final current = _state.activeStream;
     if (current != null) {
@@ -770,24 +1383,28 @@ class PlayerSessionController extends ChangeNotifier {
     // respect their choice and let them retry or pick another link instead of
     // silently hijacking playback to a random link.
     if (_userLockedStream && !forceFailover) {
+      final mapped = UserError.from(
+        reason,
+        fallbackType: UserErrorType.playbackFailed,
+        logTag: 'PlayerController.userLocked',
+      );
       _setState(
         _state.copyWith(
           isInitializing: false,
           isSwitchingSource: false,
           isBuffering: false,
-          errorMessage: reason,
+          error: mapped,
         ),
       );
+      _syncWakelock();
       return;
     }
 
-    final resumeMs = currentPosition > Duration.zero
-        ? currentPosition.inMilliseconds
-        : _pendingResumeMs;
-
     final eligible = _state.rankedStreams
         .where((r) =>
-            r.isAutoPlayEligible && !_sessionFailedKeys.contains(r.dedupKey))
+            r.isAutoPlayEligible &&
+            !_sessionFailedKeys.contains(r.dedupKey) &&
+            !_previousEpisodeStreamKeys.contains(r.dedupKey))
         .toList()
       ..sort((a, b) => b.compositeScore.compareTo(a.compositeScore));
     final nextCandidate = eligible.firstOrNull;
@@ -819,6 +1436,7 @@ class PlayerSessionController extends ChangeNotifier {
           clearError: true,
         ),
       );
+      _syncWakelock();
       unawaited(
         container
             .read(streamPrefetchControllerProvider.notifier)
@@ -827,20 +1445,42 @@ class PlayerSessionController extends ChangeNotifier {
       return;
     }
 
+    final mapped = UserError.from(
+      reason,
+      fallbackType: UserErrorType.playbackFailed,
+      logTag: 'PlayerController.failure',
+    );
     _setState(
       _state.copyWith(
         isInitializing: false,
         isSwitchingSource: false,
         isBuffering: false,
-        errorMessage: reason,
+        error: mapped,
       ),
     );
+    _syncWakelock();
+  }
+
+  List<ResolvedSubtitle> _mergedExternalSubtitles(PrefetchSnapshot? snap) {
+    final activeSubs =
+        _state.activeStream?.stream.subtitles ?? const <ResolvedSubtitle>[];
+    final snapSubs = snap?.subtitles ?? const <ResolvedSubtitle>[];
+    if (activeSubs.isEmpty) return snapSubs;
+    if (snapSubs.isEmpty) return activeSubs;
+    final seen = <String>{};
+    final out = <ResolvedSubtitle>[];
+    for (final s in [...activeSubs, ...snapSubs]) {
+      final key = s.url.trim();
+      if (key.isEmpty || !seen.add(key)) continue;
+      out.add(s);
+    }
+    return out;
   }
 
   void _onTracksUpdated(Tracks tracks) {
     final prefSnap =
         container.read(streamPrefetchControllerProvider)[_currentPrefetchKey];
-    final externalSubs = prefSnap?.subtitles ?? const <ResolvedSubtitle>[];
+    final externalSubs = _mergedExternalSubtitles(prefSnap);
     final audioOpts = TrackOrchestrator.buildAudioOptions(tracks.audio);
     final subOpts = TrackOrchestrator.buildSubtitleOptions(
       tracks.subtitle,
@@ -897,7 +1537,7 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   Future<void> switchStream(RankedStream next) async {
-    if (!next.stream.transport.isPlayableDirect) {
+    if (!next.stream.canPlayInternally) {
       await openExternalStream(next.stream);
       return;
     }
@@ -909,7 +1549,7 @@ class PlayerSessionController extends ChangeNotifier {
     _userLockedStream = true;
     _awaitingResumedFallback = false;
 
-    final savedPos = currentPosition;
+    final savedPos = effectivePosition;
     final wasPlaying = _state.isPlaying;
     _pendingResumeMs = savedPos.inMilliseconds;
     _wasPlayingBeforeSwitch = wasPlaying;
@@ -930,16 +1570,23 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   Future<void> retryCurrentOrNext() async {
+    final savedPos = effectivePosition;
+    if (savedPos > Duration.zero) {
+      _pendingResumeMs = savedPos.inMilliseconds;
+    }
     _sessionFailedKeys.clear();
     _hasStartedFirstOpen = false;
     _userLockedStream = false;
     _awaitingResumedFallback = false;
+    _prematureEofDetected = false;
+    _sameStreamRecoveryAttempts = 0;
     _setState(
       _state.copyWith(
         isInitializing: true,
         clearError: true,
       ),
     );
+    _syncWakelock();
     await container
         .read(streamPrefetchControllerProvider.notifier)
         .prefetch(_state.query, forceRefresh: true);
@@ -993,9 +1640,21 @@ class PlayerSessionController extends ChangeNotifier {
     _setState(_state.copyWith(selectedSubtitleId: option.id));
 
     try {
-      String uriToLoad = ext.url;
+      final rawUrl = ext.url.trim();
+      final normalizedUrl = rawUrl.startsWith('//') ? 'https:$rawUrl' : rawUrl;
+      final parsedUri = Uri.tryParse(normalizedUrl);
+      if (parsedUri == null ||
+          (parsedUri.scheme != 'http' &&
+              parsedUri.scheme != 'https' &&
+              parsedUri.scheme != 'file')) {
+        throw FormatException('Unsupported subtitle URI: $rawUrl');
+      }
+      String uriToLoad = normalizedUrl;
       if (ext.headers.isNotEmpty) {
-        uriToLoad = await _downloadExternalSubToTemp(ext);
+        uriToLoad = await _downloadExternalSubToTemp(
+          ext,
+          normalizedUrl: normalizedUrl,
+        );
       }
       await _player.setSubtitleTrack(
         SubtitleTrack.uri(
@@ -1010,19 +1669,29 @@ class PlayerSessionController extends ChangeNotifier {
     }
   }
 
-  Future<String> _downloadExternalSubToTemp(ResolvedSubtitle sub) async {
-    final lowerUrl = sub.url.toLowerCase();
+  Future<String> _downloadExternalSubToTemp(
+    ResolvedSubtitle sub, {
+    String? normalizedUrl,
+  }) async {
+    final targetUrl = normalizedUrl ?? sub.url.trim();
+    final lowerUrl = targetUrl.toLowerCase();
     final ext = lowerUrl.contains('.ass')
         ? '.ass'
-        : lowerUrl.contains('.vtt')
-            ? '.vtt'
-            : '.srt';
+        : lowerUrl.contains('.ssa')
+            ? '.ssa'
+            : lowerUrl.contains('.vtt')
+                ? '.vtt'
+                : lowerUrl.contains('.sup')
+                    ? '.sup'
+                    : lowerUrl.contains('.sub')
+                        ? '.sub'
+                        : '.srt';
     final file = File(
-      '${Directory.systemTemp.path}/openflix_sub_${sub.url.hashCode}$ext',
+      '${Directory.systemTemp.path}/openflix_sub_${targetUrl.hashCode}$ext',
     );
     if (!await file.exists()) {
       final resp = await _subDio.get<List<int>>(
-        sub.url,
+        targetUrl,
         options: Options(
           headers: sub.headers,
           responseType: ResponseType.bytes,
@@ -1033,15 +1702,64 @@ class PlayerSessionController extends ChangeNotifier {
     return Uri.file(file.path).toString();
   }
 
-  Future<void> togglePlayPause() => _player.playOrPause();
+  Future<void> togglePlayPause() async {
+    if (_disposed || _isOpeningStream || _isRecoveringStream) return;
+
+    // Normal pause: never re-open or lose playback position.
+    if (_state.isPlaying && !_player.state.completed) {
+      await _player.pause();
+      return;
+    }
+
+    // Resuming playback: guard against media_kit's built-in behavior where
+    // calling play()/playOrPause() while state.completed == true executes
+    // `seek(Duration.zero)` and restarts the stream from 00:00.
+    final resumePos = effectivePosition;
+    final dur = effectiveDuration;
+    final isGenuineEnd =
+        dur > Duration.zero && resumePos > Duration.zero && _isNearGenuineEnd(resumePos, dur);
+
+    if (_player.state.completed || _prematureEofDetected) {
+      if (isGenuineEnd) {
+        // User genuinely finished the video and tapped Play to replay.
+        _prematureEofDetected = false;
+        _lastValidPosition = Duration.zero;
+        _pendingResumeMs = 0;
+        _pendingPostOpenSeek = null;
+        await _player.seek(Duration.zero);
+        await _player.play();
+        return;
+      }
+
+      if (_state.activeStream != null && resumePos > Duration.zero) {
+        await _recoverActiveStreamAtLastPosition(
+          play: true,
+          resetRetryBudget: true,
+        );
+        return;
+      }
+    }
+
+    // Normal unpause: restore position if mpv drifted back to 0 while paused.
+    if (resumePos > const Duration(seconds: 2) &&
+        _player.state.position < const Duration(seconds: 1)) {
+      await _player.seek(resumePos);
+    }
+    await _player.play();
+  }
 
   Future<void> seekTo(Duration target) async {
-    final dur = currentDuration;
+    final dur = effectiveDuration;
     final clamped = dur > Duration.zero
         ? Duration(
             milliseconds: target.inMilliseconds.clamp(0, dur.inMilliseconds),
           )
         : (target.isNegative ? Duration.zero : target);
+    _lastValidPosition = clamped;
+    _pendingResumeMs = clamped.inMilliseconds;
+    _pendingPostOpenSeek = null;
+    _postOpenSeekDispatched = false;
+    _prematureEofDetected = false;
     await _player.seek(clamped);
     timelineNotifier.value = timelineNotifier.value.copyWith(position: clamped);
     if (dur > Duration.zero &&
@@ -1056,7 +1774,7 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   Future<void> seekRelative(Duration delta) =>
-      seekTo(currentPosition + delta);
+      seekTo(effectivePosition + delta);
 
   Future<void> setSpeed(double rate) async {
     await _player.setRate(rate);
@@ -1124,27 +1842,36 @@ class PlayerSessionController extends ChangeNotifier {
     _autoSkippedTypes.clear();
     _reachedNextEpisodePoint = false;
     _chaptersLoadedForGen = -1;
+    _onlineSkipFetchedDurationSec = 0;
     _cancelAutoOutroCountdown();
     if (activeSkipPromptNotifier.value != null) {
       activeSkipPromptNotifier.value = null;
     }
   }
 
-  Future<void> _fetchOnlineSkipSegments(StreamQuery query) async {
+  Future<void> _fetchOnlineSkipSegments(
+    StreamQuery query, {
+    int? durationSec,
+  }) async {
     final fetchGen = _skipFetchGeneration;
+    final effectiveDurSec = (durationSec != null && durationSec > 0)
+        ? durationSec
+        : (effectiveDuration.inSeconds > 0
+            ? effectiveDuration.inSeconds
+            : null);
+    if (effectiveDurSec != null) {
+      _onlineSkipFetchedDurationSec = effectiveDurSec;
+    }
     try {
       final repo = container.read(skipSegmentsRepositoryProvider);
-      final durSec = currentDuration.inSeconds > 0
-          ? currentDuration.inSeconds
-          : null;
       final segments = await repo.fetchOnlineSegments(
         query,
-        durationSec: durSec,
+        durationSec: effectiveDurSec,
       );
       if (_disposed || fetchGen != _skipFetchGeneration) return;
       _onlineSkipSegments = segments;
       _rebuildMergedSkipSegments();
-      _evaluateActiveSkipSegment(currentPosition);
+      _evaluateActiveSkipSegment(effectivePosition);
     } catch (_) {}
   }
 
@@ -1158,7 +1885,7 @@ class PlayerSessionController extends ChangeNotifier {
       if (parsed.isEmpty) return;
       _embeddedSkipSegments = parsed;
       _rebuildMergedSkipSegments();
-      _evaluateActiveSkipSegment(currentPosition);
+      _evaluateActiveSkipSegment(effectivePosition);
     } catch (_) {}
   }
 
@@ -1166,7 +1893,8 @@ class PlayerSessionController extends ChangeNotifier {
     _mergedSkipSegments = SkipSegmentsRepository.mergeAndSanitize(
       embedded: _embeddedSkipSegments,
       online: _onlineSkipSegments,
-      durationMs: currentDuration.inMilliseconds,
+      durationMs: effectiveDuration.inMilliseconds,
+      isAnime: _state.query.isAnime,
     );
   }
 
@@ -1177,6 +1905,9 @@ class PlayerSessionController extends ChangeNotifier {
     return null;
   }
 
+  /// True once playback is near the true end of the episode (used for Continue
+  /// Watching promotion and showing the standalone Next Episode prompt when no
+  /// Skip Outro segment is active).
   bool _isAtNextEpisodePoint(Duration pos, Duration dur) {
     if (_state.query.mediaType != 'series' || dur <= Duration.zero) {
       return false;
@@ -1190,21 +1921,24 @@ class PlayerSessionController extends ChangeNotifier {
         postCredits != null &&
         postCredits.startMs >= outro.startMs;
 
+    if (hasPostCreditsAfterOutro) {
+      return posMs >= postCredits.endMs - 10000 ||
+          (dur - pos) <= const Duration(seconds: 15);
+    }
+
     if (outro != null) {
-      if (!hasPostCreditsAfterOutro && posMs >= outro.startMs) {
-        return true;
+      // Wait until outro finishes (or we're in the final 15s of video) so Play
+      // Next stays coordinated near the actual end and never crowds Skip Outro.
+      if (posMs >= outro.endMs) {
+        return (dur - pos) <= const Duration(seconds: 20) ||
+            (durMs - outro.endMs) <= 15000;
       }
-      if (hasPostCreditsAfterOutro && posMs >= postCredits.endMs - 8000) {
-        return true;
-      }
-      if (posMs >= outro.endMs - 2000 && !hasPostCreditsAfterOutro) {
-        return true;
-      }
+      return (dur - pos) <= const Duration(seconds: 10);
     }
 
     final frac = posMs / durMs;
     final rem = dur - pos;
-    return frac >= 0.88 || (rem <= const Duration(seconds: 45) && frac >= 0.78);
+    return frac >= 0.94 || (rem <= const Duration(seconds: 25) && frac >= 0.88);
   }
 
   void _triggerNextEpisodePrefetchIfNeeded(StreamQuery nextQ) {
@@ -1221,8 +1955,8 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   void _evaluateActiveSkipSegment(Duration pos) {
-    if (_disposed) return;
-    final dur = currentDuration;
+    if (_disposed || _isTransitioningEpisode) return;
+    final dur = effectiveDuration;
     if (dur <= Duration.zero) {
       _clearSkipPrompt();
       return;
@@ -1231,11 +1965,17 @@ class PlayerSessionController extends ChangeNotifier {
     final posMs = pos.inMilliseconds;
     final durMs = dur.inMilliseconds;
     final isSeries = _state.query.mediaType == 'series';
-    final nextQ = isSeries ? (_state.nextEpisodeQuery ?? _resolveNextEpisodeQuery()) : null;
+    final nextQ =
+        isSeries ? (_state.nextEpisodeQuery ?? _resolveNextEpisodeQuery()) : null;
 
-    // Promote the next episode in Continue Watching as soon as the user reaches
-    // the Next Episode point (outro without post-credits, or final ~12%/45s).
-    if (isSeries && _isAtNextEpisodePoint(pos, dur)) {
+    // Quietly prefetch the next episode and promote Continue Watching once the
+    // user enters the outro or reaches the final stretch of the episode.
+    final outroSeg = _segmentOfType(SkipSegmentType.outro);
+    final reachedEndRegion = _isAtNextEpisodePoint(pos, dur) ||
+        (outroSeg != null &&
+            posMs >= outroSeg.startMs &&
+            (durMs - outroSeg.endMs) <= 5000);
+    if (isSeries && reachedEndRegion) {
       if (nextQ != null) {
         _triggerNextEpisodePrefetchIfNeeded(nextQ);
       }
@@ -1249,8 +1989,10 @@ class PlayerSessionController extends ChangeNotifier {
     final postCredits = _segmentOfType(SkipSegmentType.postCredits);
 
     // 1. Check explicit segments in priority order: recap -> intro -> outro.
+    //    Uses isPromptActiveAt so Skip Intro appears 3.5s before intro.start
+    //    through intro.end, and Skip Outro is NEVER overwritten by Play Next.
     for (final seg in _mergedSkipSegments) {
-      if (!seg.isActiveAt(posMs)) continue;
+      if (!seg.isPromptActiveAt(posMs)) continue;
       if (seg.type == SkipSegmentType.recap) {
         candidate = ActiveSkipPrompt(
           segment: seg,
@@ -1268,17 +2010,33 @@ class PlayerSessionController extends ChangeNotifier {
         break;
       }
       if (seg.type == SkipSegmentType.outro) {
-        if (postCredits != null && postCredits.startMs >= seg.startMs) {
+        if (isSeries && nextQ != null) {
+          _triggerNextEpisodePrefetchIfNeeded(nextQ);
+        }
+        final hasPostCredits =
+            postCredits != null && postCredits.startMs >= seg.startMs;
+        final remainingAfterOutroMs = durMs - seg.endMs;
+        if (hasPostCredits) {
           candidate = ActiveSkipPrompt(
             segment: seg,
-            actionKind: SkipActionKind.skipToPostCredits,
+            actionKind: SkipActionKind.skipCredits,
             targetSeekMs: postCredits.startMs,
           );
-        } else if (isSeries && nextQ != null) {
-          _triggerNextEpisodePrefetchIfNeeded(nextQ);
+        } else if (remainingAfterOutroMs > 5000) {
+          // Content continues after outro (e.g. post-credits / preview): seek
+          // cleanly to outro.end.
           candidate = ActiveSkipPrompt(
             segment: seg,
-            actionKind: SkipActionKind.nextEpisode,
+            actionKind: SkipActionKind.skipCredits,
+            targetSeekMs: seg.endMs,
+          );
+        } else if (isSeries && nextQ != null) {
+          // Outro runs right up to the end of the episode (<=5s left): still
+          // display "Skip outro", and advance cleanly to next episode on tap.
+          candidate = ActiveSkipPrompt(
+            segment: seg,
+            actionKind: SkipActionKind.skipCredits,
+            advancesToNextEpisode: true,
             nextEpisodeBadge: 'S${nextQ.season ?? 1}E${nextQ.episode ?? 1}',
           );
         } else {
@@ -1292,8 +2050,8 @@ class PlayerSessionController extends ChangeNotifier {
       }
     }
 
-    // 2. Fallback Next Episode CTA for series when no explicit outro covers the
-    // end (or after a post-credits scene finishes).
+    // 2. Coordinated Next Episode prompt near the actual end of the episode
+    //    (only when no Recap / Intro / Outro prompt is currently active).
     if (candidate == null && isSeries && nextQ != null) {
       final insidePostCredits =
           postCredits != null && postCredits.isActiveAt(posMs);
@@ -1312,7 +2070,8 @@ class PlayerSessionController extends ChangeNotifier {
       }
     }
 
-    if (candidate == null || _dismissedSkipTypes.contains(candidate.segment.type)) {
+    if (candidate == null ||
+        _dismissedSkipTypes.contains(candidate.segment.type)) {
       _clearSkipPrompt();
       return;
     }
@@ -1321,11 +2080,13 @@ class PlayerSessionController extends ChangeNotifier {
         container.read(playbackPreferencesControllerProvider).valueOrNull ??
             const PlaybackPreferences();
 
-    // Auto-skip Intro & Recap (once per segment type to avoid rewind loops).
+    // Auto-skip Intro & Recap ONLY once playback actually reaches segment.startMs
+    // (never during the 3.5s pre-intro manual button lead-in).
     if (_state.isPlaying &&
         prefs.autoSkipIntroRecap &&
         (candidate.actionKind == SkipActionKind.skipIntro ||
             candidate.actionKind == SkipActionKind.skipRecap) &&
+        candidate.segment.isActiveAt(posMs) &&
         !_autoSkippedTypes.contains(candidate.segment.type) &&
         candidate.targetSeekMs != null) {
       _autoSkippedTypes.add(candidate.segment.type);
@@ -1338,8 +2099,8 @@ class PlayerSessionController extends ChangeNotifier {
       return;
     }
 
-    // Auto-skip Outro (instant jump to post-credits / credits end, or 5s
-    // cancellable countdown for Next Episode).
+    // Auto-skip Outro (instant jump to post-credits / outro end, or 5s
+    // cancellable countdown when advancing to the Next Episode).
     if (_state.isPlaying &&
         prefs.autoSkipOutro &&
         !_autoSkippedTypes.contains(SkipSegmentType.outro)) {
@@ -1352,6 +2113,7 @@ class PlayerSessionController extends ChangeNotifier {
         return;
       }
       if (candidate.actionKind == SkipActionKind.skipCredits &&
+          !candidate.advancesToNextEpisode &&
           candidate.targetSeekMs != null) {
         _autoSkippedTypes.add(SkipSegmentType.outro);
         _clearSkipPrompt();
@@ -1359,7 +2121,8 @@ class PlayerSessionController extends ChangeNotifier {
         unawaited(seekTo(Duration(milliseconds: candidate.targetSeekMs!)));
         return;
       }
-      if (candidate.actionKind == SkipActionKind.nextEpisode) {
+      if (candidate.actionKind == SkipActionKind.nextEpisode ||
+          candidate.advancesToNextEpisode) {
         _ensureAutoOutroCountdown(candidate);
         return;
       }
@@ -1422,7 +2185,8 @@ class PlayerSessionController extends ChangeNotifier {
     if (prompt == null) return;
     _cancelAutoOutroCountdown();
 
-    if (prompt.actionKind == SkipActionKind.nextEpisode) {
+    if (prompt.actionKind == SkipActionKind.nextEpisode ||
+        prompt.advancesToNextEpisode) {
       _autoSkippedTypes.add(SkipSegmentType.outro);
       activeSkipPromptNotifier.value = null;
       await playNextEpisode();
@@ -1448,6 +2212,9 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   Future<void> setHardwareDecoding(bool enabled) async {
+    _hwdecPreferred = enabled;
+    _fellBackToSoftwareForStream = false;
+    _consecutiveVideoStallTicks = 0;
     await container
         .read(playbackPreferencesControllerProvider.notifier)
         .setHardwareDecoding(enabled);
@@ -1456,7 +2223,7 @@ class PlayerSessionController extends ChangeNotifier {
       try {
         await platform.setProperty(
           'hwdec',
-          enabled ? 'mediacodec,mediacodec-copy' : 'no',
+          enabled ? _stableAndroidHwdec : 'no',
         );
       } catch (_) {}
     }
@@ -1615,40 +2382,93 @@ class PlayerSessionController extends ChangeNotifier {
   }
 
   Future<void> playNextEpisode() async {
+    if (_disposed || _isTransitioningEpisode) return;
     final nextQ = _state.nextEpisodeQuery ?? _resolveNextEpisodeQuery();
     if (nextQ == null) return;
-    await flushProgress(forceCompleted: true);
+    if (nextQ.season == _state.query.season &&
+        nextQ.episode == _state.query.episode) {
+      return;
+    }
 
-    _stallWatchdog?.cancel();
-    _graceTimer?.cancel();
-    _graceTimer = null;
-    _pauseScrapingTimer?.cancel();
-    _pauseScrapingTimer = null;
-    _sessionFailedKeys.clear();
-    _hasStartedFirstOpen = false;
-    _userLockedStream = false;
-    _awaitingResumedFallback = false;
-    _pendingResumeMs = 0;
-    _prefetchedNextKey = null;
+    _isTransitioningEpisode = true;
+    try {
+      // SYNCHRONOUSLY detach previous episode subscription & invalidate all
+      // in-flight opens/timers BEFORE any `await`, so a prefetch map emission
+      // during `flushProgress()` or `_player.stop()` can NEVER trigger
+      // `_tryStartFirstPlayable()` on the previous episode's cached snapshot.
+      final prevPrefetchKey = _currentPrefetchKey;
+      final prevActiveKey = _state.activeStream?.dedupKey;
+      if (prevActiveKey != null && prevActiveKey.isNotEmpty) {
+        _previousEpisodeStreamKeys.add(prevActiveKey);
+      }
 
-    await _player.stop();
-    timelineNotifier.value = const PlayerTimelineState();
+      _prefetchSub?.close();
+      _prefetchSub = null;
+      _openGeneration++;
+      _skipFetchGeneration++;
+      _stallWatchdog?.cancel();
+      _graceTimer?.cancel();
+      _graceTimer = null;
+      _pauseScrapingTimer?.cancel();
+      _pauseScrapingTimer = null;
+      _cancelAutoOutroCountdown();
+      activeSkipPromptNotifier.value = null;
 
-    _setState(
-      PlayerUiState(
-        query: nextQ,
-        isInitializing: true,
-        isResolvingLinks: true,
-        playbackSpeed: _state.playbackSpeed,
-        fitMode: _state.fitMode,
-      ),
-    );
-    _bindPrefetch(nextQ);
+      await flushProgress(forceCompleted: true);
+      if (_disposed) return;
+
+      // Pause/clear previous episode prefetch so its streams cannot bleed over.
+      final prefetchNotifier =
+          container.read(streamPrefetchControllerProvider.notifier);
+      prefetchNotifier.pausePrefetch(prevPrefetchKey);
+
+      await _player.stop();
+      if (_disposed) return;
+
+      // Atomically clear all previous-episode playback state BEFORE updating
+      // `_state.query` to `nextQ` and re-subscribing to prefetch.
+      _sessionFailedKeys.clear();
+      _hasStartedFirstOpen = false;
+      _userLockedStream = false;
+      _awaitingResumedFallback = false;
+      _isOpeningStream = false;
+      _isRecoveringStream = false;
+      _prematureEofDetected = false;
+      _hasReceivedDurationForOpen = false;
+      _sameStreamRecoveryAttempts = 0;
+      _lastValidPosition = Duration.zero;
+      _lastValidDuration = Duration.zero;
+      _pendingPostOpenSeek = null;
+      _postOpenSeekDispatched = false;
+      _recoveryBaselinePos = null;
+      _pendingResumeMs = 0;
+      _prefetchedNextKey = null;
+      _tracksAppliedForOpen = false;
+      timelineNotifier.value = const PlayerTimelineState();
+      _resetSkipSegmentsForEpisode();
+
+      _setState(
+        PlayerUiState(
+          query: nextQ,
+          isInitializing: true,
+          isResolvingLinks: true,
+          playbackSpeed: _state.playbackSpeed,
+          fitMode: _state.fitMode,
+        ),
+      );
+      _syncWakelock();
+    } finally {
+      _isTransitioningEpisode = false;
+    }
+
+    if (!_disposed) {
+      _bindPrefetch(nextQ);
+    }
   }
 
   Future<void> flushProgress({bool forceCompleted = false}) async {
-    final dur = currentDuration.inMilliseconds;
-    final pos = currentPosition.inMilliseconds;
+    final dur = effectiveDuration.inMilliseconds;
+    final pos = effectivePosition.inMilliseconds;
     final effectiveCompleted = forceCompleted ||
         (_state.query.mediaType == 'series' && _reachedNextEpisodePoint);
     if (dur <= 0 && !effectiveCompleted) return;
@@ -1696,7 +2516,7 @@ class PlayerSessionController extends ChangeNotifier {
   void _showStatusBanner(String msg) {
     _statusBannerTimer?.cancel();
     _setState(_state.copyWith(statusBanner: msg));
-    _statusBannerTimer = Timer(const Duration(seconds: 3), () {
+    _statusBannerTimer = Timer(const Duration(milliseconds: 3500), () {
       if (!_disposed) {
         _setState(_state.copyWith(clearStatusBanner: true));
       }
@@ -1725,6 +2545,7 @@ class PlayerSessionController extends ChangeNotifier {
     _stallWatchdog?.cancel();
     _pauseScrapingTimer?.cancel();
     _progressFlushTimer?.cancel();
+    _videoStallTimer?.cancel();
     _statusBannerTimer?.cancel();
     _autoOutroCountdownTimer?.cancel();
     _prefetchSub?.close();
@@ -1732,7 +2553,7 @@ class PlayerSessionController extends ChangeNotifier {
       s.cancel();
     }
     _subs.clear();
-    _updateWakelock(false);
+    _updateWakelock(false, force: true);
     timelineNotifier.dispose();
     subtitleScaleNotifier.dispose();
     activeSkipPromptNotifier.dispose();

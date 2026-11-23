@@ -13,7 +13,7 @@ import '../presentation/controllers/stream_prefetch_controller.dart';
 /// Pure Dart parser for `libmpv`'s `chapter-list` JSON property.
 class MpvChapterParser {
   static final _introRegex = RegExp(
-    r'^(?:intro|opening(?:\s+(?:credits|theme|song))?|op(?:\s*\d+)?|title\s+sequence|main\s+titles?|theme(?:\s+song)?|intro\s+credits)$',
+    r'^(?:intro(?:\s+(?:credits|theme|song))?|opening(?:\s+(?:credits|theme|song))?|op(?:\s*\d+)?|intro\s*/\s*op|op\s*/\s*intro|title\s+sequence|main\s+titles?|theme(?:\s+song)?)$',
     caseSensitive: false,
   );
   static final _recapRegex = RegExp(
@@ -21,11 +21,11 @@ class MpvChapterParser {
     caseSensitive: false,
   );
   static final _outroRegex = RegExp(
-    r'^(?:outro|ending(?:\s+(?:credits|theme|song))?|ed(?:\s*\d+)?|end\s+credits|credits|closing(?:\s+credits)?)$',
+    r'^(?:outro(?:\s+(?:credits|theme|song))?|ending(?:\s+(?:credits|theme|song))?|ed(?:\s*\d+)?|outro\s*/\s*ed|ed\s*/\s*outro|credits\s*/\s*ed|end\s+credits|credits|closing(?:\s+(?:credits|theme|song))?)$',
     caseSensitive: false,
   );
   static final _postCreditsRegex = RegExp(
-    r'^(?:post[- ]?credits|after[- ]?credits|stinger|epilogue|(?:next\s+episode\s+)?preview|next\s+episode)$',
+    r'^(?:post[- ]?credits|after[- ]?credits|stinger|epilogue|c[- ]?part|(?:next\s+episode\s+)?preview|next\s+(?:episode|time))$',
     caseSensitive: false,
   );
 
@@ -218,6 +218,7 @@ class AniSkipClient {
     required int malId,
     required int episode,
     int episodeLengthSec = 0,
+    int? actualDurationSec,
   }) async {
     if (malId <= 0 || episode <= 0) return const [];
     try {
@@ -228,12 +229,20 @@ class AniSkipClient {
       final resp = await _dio.get<dynamic>(url);
       final data = resp.data;
       if (data is Map) {
-        return parseResponse(Map<String, dynamic>.from(data));
+        return parseResponse(
+          Map<String, dynamic>.from(data),
+          actualDurationSec: actualDurationSec ??
+              (episodeLengthSec > 0 ? episodeLengthSec : null),
+        );
       }
       if (data is String && data.isNotEmpty) {
         final decoded = jsonDecode(data);
         if (decoded is Map) {
-          return parseResponse(Map<String, dynamic>.from(decoded));
+          return parseResponse(
+            Map<String, dynamic>.from(decoded),
+            actualDurationSec: actualDurationSec ??
+                (episodeLengthSec > 0 ? episodeLengthSec : null),
+          );
         }
       }
     } catch (_) {
@@ -243,7 +252,10 @@ class AniSkipClient {
   }
 
   @visibleForTesting
-  static List<SkipSegment> parseResponse(Map<String, dynamic> json) {
+  static List<SkipSegment> parseResponse(
+    Map<String, dynamic> json, {
+    int? actualDurationSec,
+  }) {
     if (json['found'] != true) return const [];
     final rawResults = json['results'];
     if (rawResults is! List) return const [];
@@ -257,6 +269,17 @@ class AniSkipClient {
       final startSec = (interval['startTime'] as num?)?.toDouble();
       final endSec = (interval['endTime'] as num?)?.toDouble();
       if (startSec == null || endSec == null) continue;
+
+      // Reject AniSkip records from a mismatched release cut (e.g. TV vs Blu-ray
+      // or different recap/cold-open length) when actual video duration is known.
+      final itemEpisodeLen = (item['episodeLength'] as num?)?.toDouble();
+      if (actualDurationSec != null &&
+          actualDurationSec > 0 &&
+          itemEpisodeLen != null &&
+          itemEpisodeLen > 0 &&
+          (itemEpisodeLen - actualDurationSec).abs() > 15.0) {
+        continue;
+      }
 
       final startMs = (startSec * 1000).round();
       final endMs = (endSec * 1000).round();
@@ -321,7 +344,10 @@ class SkipSegmentsRepository {
     StreamQuery query, {
     int? durationSec,
   }) async {
-    final cacheKey = prefetchKeyForQuery(query);
+    final durBucket = durationSec != null && durationSec > 0
+        ? (durationSec ~/ 5) * 5
+        : 0;
+    final cacheKey = '${prefetchKeyForQuery(query)}|d$durBucket';
     final cached = _cache[cacheKey];
     if (cached != null) {
       // Touch LRU order.
@@ -389,22 +415,26 @@ class SkipSegmentsRepository {
   }) async {
     final malId = await _resolveMalId(query);
     if (malId == null || malId <= 0) return const [];
-    final expectedSec = durationSec ??
+    final exactDur = durationSec != null && durationSec > 0 ? durationSec : null;
+    final expectedSec = exactDur ??
         ((query.expectedRuntimeMinutes ?? 0) > 0
             ? query.expectedRuntimeMinutes! * 60
             : 0);
-    // Try with exact/expected length first; if AniSkip has no cut matching that
-    // length, retry with episodeLength=0 to get the best community timestamps.
+    // Try with exact video duration first; if AniSkip has no cut matching that
+    // length, retry with episodeLength=0 while STILL validating the returned
+    // item's episodeLength against exactDur to reject mismatched cuts.
     final first = await _aniSkip.fetchSegments(
       malId: malId,
       episode: query.episode!,
       episodeLengthSec: expectedSec,
+      actualDurationSec: exactDur,
     );
     if (first.isNotEmpty || expectedSec == 0) return first;
     return _aniSkip.fetchSegments(
       malId: malId,
       episode: query.episode!,
       episodeLengthSec: 0,
+      actualDurationSec: exactDur,
     );
   }
 
@@ -479,12 +509,13 @@ class SkipSegmentsRepository {
     required List<SkipSegment> embedded,
     required List<SkipSegment> online,
     required int durationMs,
+    bool isAnime = false,
   }) {
     final byType = <SkipSegmentType, SkipSegment>{};
 
     // Tier 1: Embedded chapters win per type (zero release-cut drift).
     for (final seg in embedded) {
-      final clean = _sanitize(seg, durationMs);
+      final clean = _sanitize(seg, durationMs, isAnime: isAnime);
       if (clean != null) {
         byType.putIfAbsent(clean.type, () => clean);
       }
@@ -493,7 +524,7 @@ class SkipSegmentsRepository {
     // Tier 2/3: Online APIs fill any segment types not covered by chapters.
     for (final seg in online) {
       if (byType.containsKey(seg.type)) continue;
-      final clean = _sanitize(seg, durationMs);
+      final clean = _sanitize(seg, durationMs, isAnime: isAnime);
       if (clean != null) {
         byType[clean.type] = clean;
       }
@@ -504,7 +535,11 @@ class SkipSegmentsRepository {
     return result;
   }
 
-  static SkipSegment? _sanitize(SkipSegment seg, int durationMs) {
+  static SkipSegment? _sanitize(
+    SkipSegment seg,
+    int durationMs, {
+    required bool isAnime,
+  }) {
     var start = seg.startMs < 0 ? 0 : seg.startMs;
     var end = seg.endMs;
     if (durationMs > 0) {
@@ -513,8 +548,27 @@ class SkipSegmentsRepository {
       // If segment end overshoots duration by >25s, likely a different cut.
       if (end > durationMs + 25000) return null;
       if (end > durationMs) end = durationMs;
-      // Reject pathological segments covering >65% of total runtime.
-      if (end - start > (durationMs * 0.65).round()) return null;
+
+      final len = end - start;
+      // Reject pathological segments covering >60% of total runtime.
+      if (len > (durationMs * 0.60).round()) return null;
+
+      // Per-type position & length guardrails to reject bogus/mismatched ranges.
+      switch (seg.type) {
+        case SkipSegmentType.intro:
+          if (start > (durationMs * 0.45).round()) return null;
+          final maxIntroMs = isAnime ? 210000 : 300000;
+          if (len > maxIntroMs || len > (durationMs * 0.30).round()) return null;
+        case SkipSegmentType.recap:
+          if (start > (durationMs * 0.35).round()) return null;
+          if (len > 300000 || len > (durationMs * 0.30).round()) return null;
+        case SkipSegmentType.outro:
+          if (start < (durationMs * 0.50).round()) return null;
+          final maxOutroMs = isAnime ? 240000 : (durationMs * 0.40).round();
+          if (len > maxOutroMs) return null;
+        case SkipSegmentType.postCredits:
+          if (start < (durationMs * 0.55).round()) return null;
+      }
     }
     if (end - start < 5000) return null;
     return seg.copyWith(startMs: start, endMs: end);

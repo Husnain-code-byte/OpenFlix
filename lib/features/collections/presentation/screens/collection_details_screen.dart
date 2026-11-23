@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../core/errors/user_error.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/responsive.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../details/presentation/screens/detail_screen.dart';
 import '../../../details/presentation/widgets/detail_widgets.dart';
 import '../../../home/data/models/meta_model.dart';
@@ -110,27 +112,11 @@ class _CollectionDetailsScreenState
   }
 
   void _showDownloadsStub(BuildContext context) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Downloads are coming soon',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          backgroundColor: AppColors.collectionCardOuterBg,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: AppColors.collectionCardBorder),
-          ),
-          duration: const Duration(milliseconds: 1400),
-        ),
-      );
+    AppToast.show(
+      context,
+      message: 'Downloads are coming soon',
+      icon: Icons.download_for_offline_outlined,
+    );
   }
 
   void _selectTab(
@@ -296,18 +282,48 @@ class _CollectionDetailsScreenState
           ),
         ];
       case ShelfStatus.error:
-        return [
-          headingSliver,
-          SliverPadding(
-            padding: EdgeInsets.symmetric(
-              horizontal: AppDimens.screenPadding,
-            ),
-            sliver: SliverToBoxAdapter(
-              child: _CollectionRowErrorCard(
-                title: row.config.title,
-                message: row.error,
-                onRetry: () => controller.retryRow(row.config.key),
+        if (row.items.isNotEmpty) {
+          return [
+            headingSliver,
+            SliverPadding(
+              padding: EdgeInsets.symmetric(
+                horizontal: AppDimens.screenPadding,
               ),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: AppDimens.posterGap,
+                  mainAxisSpacing: AppDimens.posterGap,
+                  childAspectRatio: AppDimens.posterWidth / AppDimens.posterHeight,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final meta = row.items[index];
+                    return FittedBox(
+                      fit: BoxFit.contain,
+                      alignment: Alignment.center,
+                      child: SizedBox(
+                        width: AppDimens.posterWidth,
+                        height: AppDimens.posterHeight,
+                        child: PosterCard(
+                          meta: meta,
+                          onTap: (m) => _openMetaDetails(context, m),
+                        ),
+                      ),
+                    );
+                  },
+                  childCount: row.items.length,
+                ),
+              ),
+            ),
+          ];
+        }
+        return [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: AppStatusCard.fromError(
+              UserError.from(row.error, fallbackType: UserErrorType.offline),
+              onAction: () => controller.retryRow(row.config.key),
             ),
           ),
         ];
@@ -369,6 +385,21 @@ class _CollectionDetailsScreenState
     required List<CollectionRowState> rows,
     required CollectionDetailsController controller,
   }) {
+    // Eliminate per-row error spam: if every row in this view failed with no
+    // cached posters, show ONE screen-level AppStatusCard. Otherwise, silently
+    // collapse individual failed optional rows.
+    final allFailedEmpty = rows.isNotEmpty &&
+        rows.every((r) => r.status == ShelfStatus.error && r.items.isEmpty);
+    if (allFailedEmpty) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: AppStatusCard.fromError(
+          UserError.from(rows.first.error, fallbackType: UserErrorType.offline),
+          onAction: controller.refresh,
+        ),
+      );
+    }
+
     return SliverList.builder(
       itemCount: rows.length,
       itemBuilder: (context, index) {
@@ -386,17 +417,16 @@ class _CollectionDetailsScreenState
               child: ShelfSkeleton(inset: AppDimens.screenPadding),
             );
           case ShelfStatus.error:
+            if (row.items.isEmpty) {
+              return const SizedBox.shrink();
+            }
             return Padding(
-              padding: EdgeInsets.fromLTRB(
-                AppDimens.screenPadding,
-                0,
-                AppDimens.screenPadding,
-                AppDimens.rowSpacing,
-              ),
-              child: _CollectionRowErrorCard(
+              padding: EdgeInsets.only(bottom: AppDimens.rowSpacing),
+              child: PosterRow(
                 title: row.config.title,
-                message: row.error,
-                onRetry: () => controller.retryRow(row.config.key),
+                metas: row.items,
+                inset: AppDimens.screenPadding,
+                onTapMeta: (meta) => _openMetaDetails(context, meta),
               ),
             );
           case ShelfStatus.loaded:
@@ -924,70 +954,6 @@ class _CollectionGridSkeleton extends StatelessWidget {
           ),
         ),
         childCount: 9,
-      ),
-    );
-  }
-}
-
-class _CollectionRowErrorCard extends StatelessWidget {
-  const _CollectionRowErrorCard({
-    required this.title,
-    required this.onRetry,
-    this.message,
-  });
-
-  final String title;
-  final String? message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.collectionCardOuterBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.collectionCardBorder, width: 1),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.wifi_off_rounded,
-            size: 20,
-            color: AppColors.textMuted,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Could not load $title',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Tap retry to fetch this row again.',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    color: AppColors.textMuted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          _ActionPillButton(label: 'Retry', onPressed: onRetry),
-        ],
       ),
     );
   }

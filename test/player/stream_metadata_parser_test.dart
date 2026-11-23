@@ -108,5 +108,35 @@ void main() {
       expect(parsed.releaseSource, ReleaseSourceHint.camTs);
       expect(parsed.detectedAudioLanguages, {'hi'});
     });
+
+    test('distinguishes Dolby Vision Profile 5 from DV+HDR10 hybrid', () {
+      const dvOnly = ResolvedStream(
+        id: 'dv_p5',
+        architecture: AddonArchitecture.stremio,
+        addonId: 'torrentio',
+        addonName: 'Torrentio',
+        providerName: 'RD+',
+        title: 'Show.S01E01.2160p.DV.WEB-DL.DDP5.1.H.265',
+        transport: StreamTransport.directHttp,
+        url: 'https://debrid.example.com/resolve/abc123',
+      );
+      const dvHybrid = ResolvedStream(
+        id: 'dv_hdr',
+        architecture: AddonArchitecture.stremio,
+        addonId: 'torrentio',
+        addonName: 'Torrentio',
+        providerName: 'RD+',
+        title: 'Show.S01E01.2160p.DV.HDR10.WEB-DL.DDP5.1.H.265',
+        transport: StreamTransport.directHttp,
+        url: 'https://debrid.example.com/resolve/def456',
+      );
+
+      final parsedP5 = StreamMetadataParser.parse(dvOnly);
+      final parsedHybrid = StreamMetadataParser.parse(dvHybrid);
+      expect(parsedP5.hdrFormat, HdrFormat.dolbyVision);
+      expect(parsedP5.isDolbyVisionProfile5Only, isTrue);
+      expect(parsedHybrid.hdrFormat, HdrFormat.dolbyVision);
+      expect(parsedHybrid.isDolbyVisionProfile5Only, isFalse);
+    });
   });
 }

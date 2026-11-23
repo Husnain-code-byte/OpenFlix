@@ -15,7 +15,7 @@ class StreamSpeedProber {
                 connectTimeout: const Duration(milliseconds: 1800),
                 receiveTimeout: const Duration(milliseconds: 1800),
                 followRedirects: true,
-                maxRedirects: 4,
+                maxRedirects: 6,
                 validateStatus: (code) => code != null && code < 500,
               ),
             );
@@ -56,7 +56,7 @@ class StreamSpeedProber {
     for (final item in ranked) {
       if (targets.length >= maxProbes) break;
       final s = item.stream;
-      if (!s.transport.isPlayableDirect || s.url == null || s.url!.isEmpty) {
+      if (!s.canPlayInternally) {
         continue;
       }
       if (cachedFor(s.dedupKey) != null) continue;
@@ -84,7 +84,7 @@ class StreamSpeedProber {
     int? expectedRuntimeMinutes,
     CancelToken? cancelToken,
   }) async {
-    final url = stream.url;
+    final url = stream.internalPlayableUrl;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (url == null || url.isEmpty) {
       return StreamProbeResult(
@@ -94,17 +94,13 @@ class StreamSpeedProber {
       );
     }
 
-    final headers = <String, dynamic>{
-      'User-Agent': _defaultUserAgent,
-      ...stream.headers,
-      if (stream.referer != null &&
-          stream.referer!.trim().isNotEmpty &&
-          !stream.headers.containsKey('Referer'))
-        'Referer': stream.referer!.trim(),
-    };
+    final headers = Map<String, dynamic>.from(
+      stream.buildRequestHeaders(defaultUserAgent: _defaultUserAgent),
+    );
     final isManifest = stream.transport == StreamTransport.hls ||
         stream.transport == StreamTransport.dash;
-    if (!isManifest && !headers.containsKey('Range')) {
+    final hasRangeHeader = headers.keys.any((k) => k.toLowerCase() == 'range');
+    if (!isManifest && !hasRangeHeader) {
       headers['Range'] = 'bytes=0-${_maxProbeBytes - 1}';
     }
 
@@ -125,17 +121,28 @@ class StreamSpeedProber {
 
       if (status < 200 || status >= 400) {
         await resp.data?.stream.drain<void>().catchError((_) {});
+        // Many debrid/proxy servers reject Dio's short Range/GET probe with
+        // 403/405/406/416/429 while libmpv streams them cleanly. Only mark
+        // definitive dead responses (e.g. 404/410) as dead.
+        final isProbeBlocked = status == 403 ||
+            status == 405 ||
+            status == 406 ||
+            status == 416 ||
+            status == 429;
         return StreamProbeResult(
-          isAlive: false,
+          isAlive: isProbeBlocked,
+          isInconclusive: isProbeBlocked,
           statusCode: status,
-          ttfbMs: ttfbMs,
+          ttfbMs: isProbeBlocked ? null : ttfbMs,
           contentType: contentType,
           probedAtMs: nowMs,
-          error: 'HTTP $status',
+          error: isProbeBlocked ? 'HTTP $status (unprobed)' : 'HTTP $status',
         );
       }
 
       // Reject HTML challenge / error pages disguised as 200 OK.
+      // Generic or missing Content-Type (e.g. application/octet-stream,
+      // binary/octet-stream, empty) is always allowed for libmpv.
       if (contentType.contains('text/html')) {
         await resp.data?.stream.drain<void>().catchError((_) {});
         return StreamProbeResult(
@@ -188,10 +195,15 @@ class StreamSpeedProber {
       }
 
       final totalMs = sw.elapsedMilliseconds.clamp(1, 60000);
-      final bodyText = isManifest
+      final isBinaryMediaResponse = contentType.startsWith('video/') ||
+          contentType.contains('octet-stream') ||
+          contentType.contains('mp2t') ||
+          contentType.contains('matroska');
+      final bodyText = isManifest && !isBinaryMediaResponse
           ? utf8.decode(chunks, allowMalformed: true).trimLeft()
           : '';
       if (isManifest &&
+          !isBinaryMediaResponse &&
           !bodyText.contains('#EXTM3U') &&
           !bodyText.contains('<MPD')) {
         return StreamProbeResult(
@@ -251,8 +263,11 @@ class StreamSpeedProber {
         probedAtMs: nowMs,
       );
     } catch (e) {
+      // Short 1.8s probe timeouts or TLS/proxy quirks should not hide a
+      // potentially playable HTTP stream from libmpv; treat as inconclusive.
       return StreamProbeResult(
-        isAlive: false,
+        isAlive: true,
+        isInconclusive: true,
         probedAtMs: nowMs,
         error: e.toString().replaceFirst('DioException', 'Network'),
       );

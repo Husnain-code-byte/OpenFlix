@@ -4,12 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OpenFlix — Open-Source Android Media Client</title>
-  <link rel="icon" type="image/png" href="/favicon.png" />
-  <link rel="apple-touch-icon" href="/favicon.png" />
-  <meta name="description" content="OpenFlix is an open-source OLED Android media client powered by libmpv, 1-click TMDB sync, and Stremio/CloudStream addons." />
+  <link rel="icon" type="image/png" href="./favicon.png" />
+  <link rel="apple-touch-icon" href="./favicon.png" />
+  <meta name="description" content="OpenFlix is an open-source OLED Android media client powered by libmpv, 1-click TMDB sync, and Stremio/CloudStream addons — tuned for 3GB RAM devices." />
   <meta name="google-site-verification" content="1BeQDuGsse-HgX4RdLLRKZUGjCuD3gE7FvoBWQP1oJA" />
   <link rel="canonical" href="https://openflix-6h8.pages.dev/" />
   <meta name="robots" content="index, follow" />
+  <meta name="theme-color" content="#FACC15" />
   <meta name="keywords" content="OpenFlix, OpenFlix APK, open source Android media client, libmpv Android player, Stremio addons Android, CloudStream client, TMDB sync app" />
 
   <!-- Open Graph / Social Previews -->
@@ -31,884 +32,646 @@
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
   }
   </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --bg: #000000;
-      --red: #e50914;
-      --red-hover: #c11119;
-      --text: #ffffff;
-      --muted: rgba(255, 255, 255, 0.72);
-      --faq-bg: #2d2d2d;
-      --faq-hover: #414141;
-      --max: 1180px;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; background: var(--bg); }
-    body {
-      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      overflow-x: hidden;
-      -webkit-font-smoothing: antialiased;
-      line-height: 1.45;
-    }
-
-    /* ================= HEADER ================= */
-    .header {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      z-index: 30;
-      padding: 24px 32px;
-    }
-    .header-inner {
-      max-width: var(--max);
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-    .logo {
-      font-family: "Bebas Neue", sans-serif;
-      font-size: clamp(2.1rem, 4vw, 2.75rem);
-      letter-spacing: 0.05em;
-      color: var(--red);
-      text-decoration: none;
-      line-height: 1;
-      text-shadow: 0 2px 14px rgba(0, 0, 0, 0.7);
-    }
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .btn-ghost-sm {
-      padding: 7px 14px;
-      border-radius: 4px;
-      background: rgba(0, 0, 0, 0.55);
-      border: 1px solid rgba(255, 255, 255, 0.35);
-      color: #fff;
-      font-size: 0.85rem;
-      font-weight: 500;
-      text-decoration: none;
-      transition: background 0.15s ease, border-color 0.15s ease;
-    }
-    .btn-ghost-sm:hover {
-      background: rgba(255, 255, 255, 0.14);
-      border-color: rgba(255, 255, 255, 0.6);
-    }
-    .btn-red-sm {
-      padding: 7px 16px;
-      border-radius: 4px;
-      background: var(--red);
-      color: #fff;
-      font-size: 0.85rem;
-      font-weight: 600;
-      text-decoration: none;
-      transition: background 0.15s ease;
-    }
-    .btn-red-sm:hover { background: var(--red-hover); }
-
-    /* ================= HERO + COMPACT 10-COLUMN POSTER WALL ================= */
-    .hero {
-      position: relative;
-      min-height: 92vh;
-      max-height: 860px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      padding: 120px 24px 130px;
-      background: #000;
-    }
-
-    .poster-wall {
-      position: absolute;
-      inset: -14% -8%;
-      z-index: 0;
-      display: grid;
-      grid-template-columns: repeat(10, 1fr);
-      gap: 10px;
-      transform: rotate(-10deg) scale(1.05);
-      pointer-events: none;
-      user-select: none;
-    }
-    .poster-col {
-      overflow: hidden;
-      height: 100%;
-    }
-    .poster-track {
-      display: flex;
-      flex-direction: column;
-      will-change: transform;
-    }
-    .poster-col.up .poster-track { animation: scrollUp var(--dur, 40s) linear infinite; }
-    .poster-col.down .poster-track { animation: scrollDown var(--dur, 44s) linear infinite; }
-
-    .poster-tile {
-      width: 100%;
-      aspect-ratio: 2 / 3;
-      margin-bottom: 10px;
-      border-radius: 5px;
-      overflow: hidden;
-      background: #141414;
-      flex-shrink: 0;
-    }
-    .poster-tile img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      opacity: 0;
-      transition: opacity 0.45s ease;
-    }
-    .poster-tile img.loaded { opacity: 1; }
-
-    @keyframes scrollUp {
-      0% { transform: translate3d(0, 0, 0); }
-      100% { transform: translate3d(0, -50%, 0); }
-    }
-    @keyframes scrollDown {
-      0% { transform: translate3d(0, -50%, 0); }
-      100% { transform: translate3d(0, 0, 0); }
-    }
-
-    .hero-overlay {
-      position: absolute;
-      inset: 0;
-      z-index: 1;
-      pointer-events: none;
-      background:
-        radial-gradient(ellipse 75% 65% at 50% 50%, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.56) 55%, rgba(0, 0, 0, 0.85) 100%),
-        linear-gradient(180deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.25) 26%, rgba(0, 0, 0, 0.35) 70%, rgba(0, 0, 0, 0.96) 100%);
-    }
-
-    .hero-content {
-      position: relative;
-      z-index: 2;
-      max-width: 660px;
-      text-align: center;
-    }
-    .hero-content h1 {
-      font-size: clamp(2.25rem, 5.2vw, 3.85rem);
-      font-weight: 900;
-      letter-spacing: -0.025em;
-      line-height: 1.08;
-      margin-bottom: 16px;
-      text-shadow: 0 4px 24px rgba(0, 0, 0, 0.85);
-    }
-    .hero-sub {
-      font-size: clamp(1rem, 1.9vw, 1.25rem);
-      font-weight: 600;
-      margin-bottom: 18px;
-      color: #fff;
-    }
-    .hero-desc {
-      font-size: 0.98rem;
-      color: rgba(255, 255, 255, 0.86);
-      margin-bottom: 24px;
-    }
-
-    .hero-cta-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-bottom: 14px;
-    }
-    .btn-hero {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      padding: 15px 30px;
-      border-radius: 4px;
-      background: var(--red);
-      color: #fff;
-      font-size: 1.2rem;
-      font-weight: 700;
-      text-decoration: none;
-      transition: background 0.15s ease, transform 0.15s ease;
-    }
-    .btn-hero:hover { background: var(--red-hover); }
-    .btn-hero:active { transform: scale(0.98); }
-
-    .btn-hero-secondary {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 15px 22px;
-      border-radius: 4px;
-      background: rgba(22, 22, 22, 0.78);
-      border: 1px solid rgba(255, 255, 255, 0.32);
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 600;
-      text-decoration: none;
-      backdrop-filter: blur(8px);
-      transition: background 0.15s ease, border-color 0.15s ease;
-    }
-    .btn-hero-secondary:hover {
-      background: rgba(255, 255, 255, 0.14);
-      border-color: rgba(255, 255, 255, 0.6);
-    }
-
-    .apk-note {
-      font-size: 0.84rem;
-      color: rgba(255, 255, 255, 0.72);
-    }
-    .apk-note a {
-      color: #fff;
-      text-decoration: underline;
-      text-underline-offset: 3px;
-    }
-
-    /* ================= CURVED ARC DIVIDER ================= */
-    .curve-container {
-      position: relative;
-      height: 76px;
-      margin-top: -76px;
-      z-index: 10;
-      overflow: hidden;
-      pointer-events: none;
-    }
-    .curve-arc {
-      position: absolute;
-      left: -25%;
-      width: 150%;
-      height: 460px;
-      top: 12px;
-      border-top-left-radius: 50% 100%;
-      border-top-right-radius: 50% 100%;
-      background:
-        radial-gradient(50% 340px at 50% -180px, rgba(64, 97, 231, 0.42), rgba(0, 0, 0, 0.1) 70%),
-        #000000;
-      border-top: 4px solid transparent;
-      background-clip: padding-box;
-    }
-    .curve-arc::before {
-      content: "";
-      position: absolute;
-      inset: -4px -2px 0 -2px;
-      z-index: -1;
-      border-top-left-radius: 50% 100%;
-      border-top-right-radius: 50% 100%;
-      background: linear-gradient(
-        90deg,
-        rgba(33, 13, 22, 1) 16%,
-        rgba(184, 40, 105, 1) 36%,
-        rgba(229, 9, 20, 1) 50%,
-        rgba(184, 40, 105, 1) 64%,
-        rgba(33, 13, 22, 1) 84%
-      );
-    }
-
-    /* ================= MAIN BODY SECTIONS ================= */
-    .main-wrap {
-      position: relative;
-      z-index: 12;
-      background: #000;
-      padding: 8px 32px 80px;
-    }
-    .section {
-      max-width: var(--max);
-      margin: 0 auto 64px;
-    }
-    .section-title {
-      font-size: clamp(1.35rem, 2.4vw, 1.65rem);
-      font-weight: 700;
-      margin-bottom: 20px;
-      letter-spacing: -0.015em;
-    }
-
-    /* ================= APP SCREENSHOTS ROW ================= */
-    .carousel-wrap {
-      position: relative;
-    }
-    .shots-row {
-      display: flex;
-      gap: 26px;
-      overflow-x: auto;
-      scroll-snap-type: x mandatory;
-      padding: 12px 10px 18px 22px;
-      scrollbar-width: none;
-      -webkit-overflow-scrolling: touch;
-    }
-    .shots-row::-webkit-scrollbar { display: none; }
-
-    .shot-card {
-      position: relative;
-      flex: 0 0 210px;
-      scroll-snap-align: start;
-      cursor: zoom-in;
-      transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-    }
-    .shot-card:hover { transform: scale(1.045); z-index: 4; }
-
-    .shot-img-wrap {
-      width: 100%;
-      aspect-ratio: 714 / 1599;
-      border-radius: 10px;
-      overflow: hidden;
-      background: #111;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.8);
-    }
-    .shot-img-wrap img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-    }
-    .shot-num {
-      position: absolute;
-      left: -18px;
-      bottom: 22px;
-      font-size: 5.4rem;
-      font-weight: 900;
-      line-height: 0.82;
-      color: #000;
-      -webkit-text-stroke: 2px rgba(255, 255, 255, 0.85);
-      text-shadow: 0 6px 20px rgba(0, 0, 0, 0.95);
-      pointer-events: none;
-      user-select: none;
-    }
-    .shot-label {
-      margin-top: 10px;
-      font-size: 0.86rem;
-      font-weight: 500;
-      color: var(--muted);
-      text-align: center;
-    }
-
-    .carousel-arrow {
-      position: absolute;
-      top: 44%;
-      transform: translateY(-50%);
-      width: 30px;
-      height: 104px;
-      border-radius: 6px;
-      border: none;
-      background: rgba(255, 255, 255, 0.12);
-      color: #fff;
-      font-size: 1.5rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      z-index: 6;
-      transition: background 0.15s ease;
-    }
-    .carousel-arrow:hover { background: rgba(255, 255, 255, 0.24); }
-    .arrow-right { right: -6px; }
-    .arrow-left { left: -6px; }
-
-    /* ================= 4 FEATURE CARDS ================= */
-    .reasons-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-    }
-    .reason-card {
-      position: relative;
-      min-height: 268px;
-      padding: 24px 20px 76px;
-      border-radius: 16px;
-      background: linear-gradient(149deg, #192247 0%, #210e17 96.86%);
-      overflow: hidden;
-    }
-    .reason-card h3 {
-      font-size: 1.28rem;
-      font-weight: 700;
-      line-height: 1.22;
-      margin-bottom: 12px;
-      color: #fff;
-    }
-    .reason-card p {
-      font-size: 0.93rem;
-      color: rgba(255, 255, 255, 0.72);
-      line-height: 1.48;
-    }
-    .reason-icon {
-      position: absolute;
-      right: 16px;
-      bottom: 16px;
-      width: 58px;
-      height: 58px;
-    }
-
-    /* ================= FAQ ACCORDION ================= */
-    .faq-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .faq-item {
-      background: var(--faq-bg);
-    }
-    .faq-q {
-      width: 100%;
-      padding: 22px 24px;
-      background: transparent;
-      border: none;
-      color: #fff;
-      font-family: inherit;
-      font-size: clamp(1.05rem, 2vw, 1.42rem);
-      font-weight: 400;
-      text-align: left;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      cursor: pointer;
-      transition: background 0.15s ease;
-    }
-    .faq-q:hover { background: var(--faq-hover); }
-    .faq-plus {
-      width: 28px;
-      height: 28px;
-      flex-shrink: 0;
-      position: relative;
-      transition: transform 0.2s ease;
-    }
-    .faq-plus::before,
-    .faq-plus::after {
-      content: "";
-      position: absolute;
-      background: #fff;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-    }
-    .faq-plus::before { width: 24px; height: 2px; }
-    .faq-plus::after { width: 2px; height: 24px; }
-    .faq-item.open .faq-plus { transform: rotate(45deg); }
-
-    .faq-a {
-      display: none;
-      padding: 22px 24px;
-      border-top: 2px solid #000;
-      font-size: clamp(0.96rem, 1.6vw, 1.15rem);
-      color: rgba(255, 255, 255, 0.88);
-      line-height: 1.55;
-    }
-    .faq-item.open .faq-a { display: block; }
-
-    /* ================= BOTTOM DOWNLOAD PROMPT ================= */
-    .bottom-cta {
-      max-width: 720px;
-      margin: 56px auto 0;
-      text-align: center;
-    }
-    .bottom-cta p {
-      font-size: 1rem;
-      color: rgba(255, 255, 255, 0.86);
-      margin-bottom: 18px;
-    }
-
-    /* ================= FOOTER ================= */
-    footer {
-      max-width: var(--max);
-      margin: 64px auto 0;
-      padding-top: 32px;
-      border-top: 1px solid rgba(255, 255, 255, 0.12);
-      color: rgba(255, 255, 255, 0.62);
-      font-size: 0.86rem;
-    }
-    .footer-links {
-      display: flex;
-      gap: 24px;
-      flex-wrap: wrap;
-      margin-bottom: 18px;
-    }
-    .footer-links a {
-      color: rgba(255, 255, 255, 0.72);
-      text-decoration: underline;
-      text-underline-offset: 3px;
-    }
-    .footer-links a:hover { color: #fff; }
-    .disclaimer {
-      font-size: 0.8rem;
-      color: rgba(255, 255, 255, 0.45);
-      max-width: 760px;
-      line-height: 1.6;
-    }
-
-    /* ================= LIGHTBOX ================= */
-    .lightbox {
-      position: fixed;
-      inset: 0;
-      z-index: 100;
-      background: rgba(0, 0, 0, 0.94);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      cursor: zoom-out;
-    }
-    .lightbox.open { display: flex; }
-    .lightbox img {
-      max-height: 90vh;
-      max-width: 90vw;
-      border-radius: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-    }
-
-    /* ================= RESPONSIVE ================= */
-    @media (max-width: 1024px) {
-      .poster-wall { grid-template-columns: repeat(6, 1fr); }
-      .poster-col:nth-child(n+7) { display: none; }
-      .reasons-grid { grid-template-columns: repeat(2, 1fr); }
-      .reason-card { min-height: 210px; }
-    }
-
-    @media (max-width: 640px) {
-      .header { padding: 18px 20px; }
-      .btn-ghost-sm { display: none; }
-      .hero { min-height: 82vh; padding: 104px 20px 110px; }
-      .poster-wall { grid-template-columns: repeat(4, 1fr); gap: 8px; }
-      .poster-col:nth-child(n+5) { display: none; }
-      .hero-cta-row { flex-direction: column; width: 100%; }
-      .btn-hero, .btn-hero-secondary { width: 100%; font-size: 1.05rem; }
-      .main-wrap { padding: 4px 20px 64px; }
-      .shot-card { flex: 0 0 185px; }
-      .shot-num { font-size: 4.4rem; left: -14px; }
-      .carousel-arrow { display: none; }
-      .reasons-grid { grid-template-columns: 1fr; }
-      .reason-card { min-height: 175px; padding: 20px 20px 68px; }
-      .faq-q { padding: 18px 18px; }
-      .faq-a { padding: 18px 18px; }
-    }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
-<body>
+<body id="top">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
 
-  <!-- TOP HEADER -->
-  <header class="header">
-    <div class="header-inner">
-      <a href="#" class="logo">OPENFLIX</a>
-      <div class="header-actions">
-        <a class="btn-ghost-sm" href="https://discord.gg/y5QssSBcpJ" target="_blank" rel="noopener">Discord</a>
-        <a class="btn-ghost-sm" href="https://github.com/Husnain-code-byte/OpenFlix" target="_blank" rel="noopener">GitHub</a>
-        <a id="top-dl" class="btn-red-sm" href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">Download</a>
+  <!-- ================= STICKY TOP NAVBAR ================= -->
+  <header class="navbar">
+    <div class="container navbar-inner">
+      <div class="brand-group">
+        <a href="#top" class="brand" aria-label="OpenFlix Home">
+          <span class="brand-icon-wrap">
+            <img src="./favicon.png" alt="" width="28" height="28" decoding="async" />
+          </span>
+          <span class="brand-title">OPENFLIX</span>
+        </a>
+        <a href="#changelog" class="status-pill" aria-label="View latest release notes">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span data-release-badge>Latest Release</span>
+        </a>
+      </div>
+
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#showcase">Showcase</a>
+        <a href="#features">Features</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#changelog">Changelog</a>
+        <a href="#download">Download</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a
+          class="btn-outline-sm"
+          href="https://github.com/Husnain-code-byte/OpenFlix"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="OpenFlix on GitHub"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.28-5.23-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.06.78 2.14 0 1.55-.01 2.8-.01 3.18 0 .31.21.66.79.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/>
+          </svg>
+          <span id="github-stars-label">GitHub</span>
+        </a>
+        <a
+          class="btn-dark-sm"
+          data-dl-arm64
+          href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest"
+        >
+          <span>Download APK</span>
+        </a>
       </div>
     </div>
   </header>
 
-  <!-- HERO WITH COMPACT 10-COLUMN ALTERNATING POSTER WALL -->
-  <section class="hero">
-    <div class="poster-wall" id="poster-wall" aria-hidden="true"></div>
-    <div class="hero-overlay" aria-hidden="true"></div>
+  <main id="main-content">
+    <!-- ================= HERO + UPFRONT OTT POSTER DECK ================= -->
+    <section class="hero-section" id="showcase">
+      <div class="container hero-grid">
+        <!-- Left: Headline, Eyebrows, CTAs, Telemetry -->
+        <div class="hero-copy">
+          <div class="eyebrow-row" aria-label="Key project specifications">
+            <span class="mono-tag mono-tag--dark">OPEN-SOURCE • GPL-3.0</span>
+            <span class="mono-tag">3GB RAM OPTIMIZED</span>
+            <span class="mono-tag">LIBMPV + STREMIO + CLOUDSTREAM</span>
+          </div>
 
-    <div class="hero-content">
-      <h1>Unlimited movies, TV shows, and anime</h1>
-      <p class="hero-sub">Free & open source. Built for Android.</p>
-      <p class="hero-desc">
-        OLED cinema UI powered by libmpv, 1-click TMDB sync, and Stremio/CloudStream addons.
-      </p>
+          <h1>
+            Unlimited cinema.<br />
+            <span class="ink-highlight">Zero bloat.</span>
+          </h1>
 
-      <div class="hero-cta-row">
-        <a id="dl-arm64" class="btn-hero" href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">
-          <span id="dl-label">Download v1.0.0</span>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </a>
-        <a class="btn-hero-secondary" href="https://discord.gg/y5QssSBcpJ" target="_blank" rel="noopener">Join Discord</a>
+          <p class="hero-lead">
+            An OLED-black Android media client engineered for speed. Pair native <strong>libmpv</strong> playback with 1-click TMDB sync and unified Stremio + CloudStream addons — running at 60fps even on 3GB RAM devices.
+          </p>
+
+          <div class="hero-cta-group">
+            <a
+              class="btn-primary-hero"
+              data-dl-arm64
+              href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v12" />
+                <path d="m7 10 5 5 5-5" />
+                <path d="M5 21h14" />
+              </svg>
+              <span id="hero-dl-label">1-Click Download (arm64-v8a)</span>
+            </a>
+
+            <div class="hero-secondary-row">
+              <a
+                class="btn-secondary-hero"
+                href="https://github.com/Husnain-code-byte/OpenFlix"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                GitHub Source
+              </a>
+              <a
+                class="btn-secondary-hero"
+                href="https://discord.gg/y5QssSBcpJ"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Join Discord
+              </a>
+            </div>
+          </div>
+
+          <div class="hero-telemetry">
+            <span class="telemetry-pill">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>
+              </svg>
+              <span id="total-downloads-label" class="tabular">Live GitHub Releases</span>
+            </span>
+            <span class="telemetry-meta">
+              <span id="hero-apk-size" class="tabular">Signed arm64-v8a APK</span> ·
+              <a data-dl-universal href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">
+                Universal APK <span id="hero-univ-size" class="tabular"></span>
+              </a>
+            </span>
+          </div>
+        </div>
+
+        <!-- Right: Upfront Framed OTT Cinema Poster Wall Deck -->
+        <div class="cinema-deck" aria-label="OpenFlix live movie, series, and anime poster showcase">
+          <div class="deck-bar">
+            <div class="deck-dots" aria-hidden="true">
+              <span class="dot dot-red"></span>
+              <span class="dot dot-yellow"></span>
+              <span class="dot dot-green"></span>
+            </div>
+            <div class="deck-title">OPENFLIX // OLED CATALOG STREAM</div>
+            <div class="deck-controls">
+              <span class="deck-live-badge">
+                <span class="deck-live-dot" aria-hidden="true"></span>
+                60FPS OLED
+              </span>
+              <button
+                type="button"
+                id="poster-motion-toggle"
+                class="deck-toggle-btn"
+                aria-pressed="false"
+                aria-label="Pause poster stream animation"
+              >
+                Pause
+              </button>
+            </div>
+          </div>
+
+          <div class="deck-viewport">
+            <div class="poster-deck-wall" id="poster-wall"></div>
+            <div class="deck-edge-fade" aria-hidden="true"></div>
+          </div>
+
+          <div class="deck-footer">
+            <span>MOVIES · SERIES · ANIME</span>
+            <span class="tabular" data-release-badge-short>ANDROID 8.0+</span>
+          </div>
+        </div>
       </div>
+    </section>
 
-      <div class="apk-note">
-        <span id="apk-meta">Signed arm64-v8a APK (~78 MB)</span> · Older device?
-        <a id="dl-universal" href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">Universal APK</a>
+    <!-- ================= 4-COLUMN CYBERPUNK SPEC STRIP ================= -->
+    <section class="spec-section" aria-label="Technical specifications">
+      <div class="container">
+        <div class="spec-grid">
+          <article class="spec-card">
+            <div class="spec-index">01 // MEMORY TARGET</div>
+            <div class="spec-value tabular">&lt; 3 GB RAM</div>
+            <p class="spec-note">60fps tuned bitmap cache</p>
+          </article>
+
+          <article class="spec-card">
+            <div class="spec-index">02 // PLAYBACK CORE</div>
+            <div class="spec-value">libmpv</div>
+            <p class="spec-note">HW + SW universal codecs</p>
+          </article>
+
+          <article class="spec-card">
+            <div class="spec-index">03 // ADDON ECOSYSTEM</div>
+            <div class="spec-value">Unified</div>
+            <p class="spec-note">Stremio + CloudStream</p>
+          </article>
+
+          <article class="spec-card">
+            <div class="spec-index">04 // LICENSE &amp; ADS</div>
+            <div class="spec-value tabular">$0.00 / FOSS</div>
+            <p class="spec-note">GPL-3.0, zero tracking</p>
+          </article>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- CURVED ARC DIVIDER -->
-  <div class="curve-container" aria-hidden="true">
-    <div class="curve-arc"></div>
-  </div>
-
-  <!-- MAIN CONTENT -->
-  <main class="main-wrap">
-
-    <!-- 1. INSIDE OPENFLIX -->
-    <section class="section" id="preview">
-      <h2 class="section-title">Inside OpenFlix</h2>
-      <div class="carousel-wrap">
-        <button class="carousel-arrow arrow-left" id="scroll-left" aria-label="Scroll left">‹</button>
+    <!-- ================= APP SCREENSHOTS SHOWCASE ================= -->
+    <section class="section" id="screenshots">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <span class="section-eyebrow">INTERFACE CAPTURE // TRUE OLED BLACK</span>
+            <h2 class="section-title">Inside OpenFlix</h2>
+          </div>
+          <div class="carousel-controls">
+            <button type="button" class="square-arrow" id="scroll-left" aria-label="Scroll screenshots left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <button type="button" class="square-arrow" id="scroll-right" aria-label="Scroll screenshots right">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </div>
 
         <div class="shots-row" id="shots-row">
-          <div class="shot-card" data-full="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e">
-            <div class="shot-img-wrap">
-              <img src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e" alt="OpenFlix Home Screen" loading="lazy" />
-            </div>
-            <span class="shot-num">1</span>
-            <div class="shot-label">Home Feed</div>
-          </div>
+          <figure class="device-shot">
+            <button
+              type="button"
+              class="device-frame"
+              data-full="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e"
+              data-caption="Home OLED UI — Hero banner & matte-black feed"
+              aria-label="Inspect Home OLED UI screenshot fullscreen"
+            >
+              <span class="device-notch" aria-hidden="true"></span>
+              <img
+                src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e"
+                alt="OpenFlix Home OLED UI screen showing featured movie hero and matte-black navigation"
+                width="714"
+                height="1599"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <figcaption class="shot-caption">
+              <span class="shot-idx">01</span>
+              <span class="shot-name">Home OLED UI</span>
+            </figcaption>
+          </figure>
 
-          <div class="shot-card" data-full="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d">
-            <div class="shot-img-wrap">
-              <img src="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d" alt="OpenFlix Discovery Rows" loading="lazy" />
-            </div>
-            <span class="shot-num">2</span>
-            <div class="shot-label">Curated Rows</div>
-          </div>
+          <figure class="device-shot">
+            <button
+              type="button"
+              class="device-frame"
+              data-full="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d"
+              data-caption="Curated Rows — Poster-snapping TMDB & AniList shelves"
+              aria-label="Inspect Curated Rows screenshot fullscreen"
+            >
+              <span class="device-notch" aria-hidden="true"></span>
+              <img
+                src="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d"
+                alt="OpenFlix Curated Rows discovery shelves for movies, TV shows, and anime"
+                width="714"
+                height="1599"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <figcaption class="shot-caption">
+              <span class="shot-idx">02</span>
+              <span class="shot-name">Curated Rows</span>
+            </figcaption>
+          </figure>
 
-          <div class="shot-card" data-full="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e">
-            <div class="shot-img-wrap">
-              <img src="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e" alt="OpenFlix Title Details" loading="lazy" />
-            </div>
-            <span class="shot-num">3</span>
-            <div class="shot-label">Title Details</div>
-          </div>
+          <figure class="device-shot">
+            <button
+              type="button"
+              class="device-frame"
+              data-full="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e"
+              data-caption="Search — Instant cross-catalog movies, series, and anime search"
+              aria-label="Inspect Search screenshot fullscreen"
+            >
+              <span class="device-notch" aria-hidden="true"></span>
+              <img
+                src="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e"
+                alt="OpenFlix Search screen with instant discovery shelves and results"
+                width="714"
+                height="1599"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <figcaption class="shot-caption">
+              <span class="shot-idx">03</span>
+              <span class="shot-name">Search</span>
+            </figcaption>
+          </figure>
 
-          <div class="shot-card" data-full="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d">
-            <div class="shot-img-wrap">
-              <img src="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d" alt="OpenFlix Collections & Sync" loading="lazy" />
-            </div>
-            <span class="shot-num">4</span>
-            <div class="shot-label">Collections</div>
-          </div>
+          <figure class="device-shot">
+            <button
+              type="button"
+              class="device-frame"
+              data-full="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d"
+              data-caption="Collections — Franchise hubs, studios, and TMDB custom lists"
+              aria-label="Inspect Collections screenshot fullscreen"
+            >
+              <span class="device-notch" aria-hidden="true"></span>
+              <img
+                src="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d"
+                alt="OpenFlix Collections screen showing streaming hubs, studios, and custom TMDB lists"
+                width="714"
+                height="1599"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <figcaption class="shot-caption">
+              <span class="shot-idx">04</span>
+              <span class="shot-name">Collections</span>
+            </figcaption>
+          </figure>
 
-          <div class="shot-card" data-full="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe">
-            <div class="shot-img-wrap">
-              <img src="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe" alt="OpenFlix Player & Addons" loading="lazy" />
-            </div>
-            <span class="shot-num">5</span>
-            <div class="shot-label">Player & Addons</div>
-          </div>
+          <figure class="device-shot">
+            <button
+              type="button"
+              class="device-frame"
+              data-full="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe"
+              data-caption="Player & Addons — libmpv playback, link switcher, and addon manager"
+              aria-label="Inspect Player and Addons screenshot fullscreen"
+            >
+              <span class="device-notch" aria-hidden="true"></span>
+              <img
+                src="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe"
+                alt="OpenFlix native libmpv video player and unified addons management screen"
+                width="714"
+                height="1599"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <figcaption class="shot-caption">
+              <span class="shot-idx">05</span>
+              <span class="shot-name">Player &amp; Addons</span>
+            </figcaption>
+          </figure>
+
+          <figure class="device-shot">
+            <button
+              type="button"
+              class="device-frame"
+              data-full="https://github.com/user-attachments/assets/3d153118-90ea-4f25-9d74-e0aa0e592d5d"
+              data-caption="Movie Details — Full metadata, ratings, cast, and 1-tap playback"
+              aria-label="Inspect Movie Details screenshot fullscreen"
+            >
+              <span class="device-notch" aria-hidden="true"></span>
+              <img
+                src="https://github.com/user-attachments/assets/3d153118-90ea-4f25-9d74-e0aa0e592d5d"
+                alt="OpenFlix Movie Details screen showing hero artwork, synopsis, ratings, and related titles"
+                width="714"
+                height="1599"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <figcaption class="shot-caption">
+              <span class="shot-idx">06</span>
+              <span class="shot-name">Movie Details</span>
+            </figcaption>
+          </figure>
+
+          <figure class="device-shot">
+            <button
+              type="button"
+              class="device-frame"
+              data-full="https://github.com/user-attachments/assets/1e64599e-99d2-4619-8f24-2264f8ef2df8"
+              data-caption="TV Show Details — Season picker, episode progress, and instant resume"
+              aria-label="Inspect TV Show Details screenshot fullscreen"
+            >
+              <span class="device-notch" aria-hidden="true"></span>
+              <img
+                src="https://github.com/user-attachments/assets/1e64599e-99d2-4619-8f24-2264f8ef2df8"
+                alt="OpenFlix TV Show Details screen showing season selector and episode list"
+                width="714"
+                height="1599"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <figcaption class="shot-caption">
+              <span class="shot-idx">07</span>
+              <span class="shot-name">TV Show Details</span>
+            </figcaption>
+          </figure>
         </div>
-
-        <button class="carousel-arrow arrow-right" id="scroll-right" aria-label="Scroll right">›</button>
       </div>
     </section>
 
-    <!-- 2. MORE REASONS TO SWITCH -->
+    <!-- ================= FEATURES BENTO GRID ================= -->
     <section class="section" id="features">
-      <h2 class="section-title">More Reasons to Switch</h2>
-      <div class="reasons-grid">
-
-        <div class="reason-card">
-          <h3>OLED Cinema UI</h3>
-          <p>Matte-black interface with poster-by-poster carousel snapping, tuned for 60fps even on 3GB RAM phones.</p>
-          <svg class="reason-icon" viewBox="0 0 64 64" fill="none">
-            <defs><linearGradient id="g1" x1="0" y1="0" x2="64" y2="64"><stop stop-color="#ff6b9d"/><stop offset="1" stop-color="#e50914"/></linearGradient></defs>
-            <rect x="8" y="12" width="48" height="34" rx="6" fill="url(#g1)" fill-opacity="0.22" stroke="url(#g1)" stroke-width="3"/>
-            <path d="M22 52h20" stroke="url(#g1)" stroke-width="3.5" stroke-linecap="round"/>
-            <polygon points="28,22 40,29 28,36" fill="url(#g1)"/>
-          </svg>
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <span class="section-eyebrow">ARCHITECTURE // BUILT FOR SPEED</span>
+            <h2 class="section-title">Engineered for smooth streaming</h2>
+          </div>
         </div>
 
-        <div class="reason-card">
-          <h3>libmpv Playback Engine</h3>
-          <p>Hardware-accelerated decoding with an in-player Links switcher, Skip Intro, Play Next, and track memory.</p>
-          <svg class="reason-icon" viewBox="0 0 64 64" fill="none">
-            <defs><linearGradient id="g2" x1="0" y1="0" x2="64" y2="64"><stop stop-color="#f472b6"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs>
-            <circle cx="32" cy="32" r="22" fill="url(#g2)" fill-opacity="0.22" stroke="url(#g2)" stroke-width="3"/>
-            <polygon points="27,21 44,32 27,43" fill="url(#g2)"/>
-          </svg>
-        </div>
+        <div class="features-grid">
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-badge">UI // 60FPS</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <h3>OLED Cinema UI</h3>
+            <p>Pure matte-black surfaces with custom poster-snapping physics, strict 64 MiB image ceilings, and smooth scrolling even on budget 3GB RAM phones.</p>
+          </article>
 
-        <div class="reason-card">
-          <h3>1-Click TMDB Sync</h3>
-          <p>Connect your TMDB account once to sync watchlists, liked titles, curated franchises, and custom lists.</p>
-          <svg class="reason-icon" viewBox="0 0 64 64" fill="none">
-            <defs><linearGradient id="g3" x1="0" y1="0" x2="64" y2="64"><stop stop-color="#fb7185"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
-            <path d="M48 24a18 18 0 0 0-30.5-5L12 24" stroke="url(#g3)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M16 40a18 18 0 0 0 30.5 5L52 40" stroke="url(#g3)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="12 16 12 24 20 24" stroke="url(#g3)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="52 48 52 40 44 40" stroke="url(#g3)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-badge">CORE // LIBMPV</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            </div>
+            <h3>Universal libmpv Playback</h3>
+            <p>MediaCodec copy-back acceleration with automatic FFmpeg software fallback, HDR tone-mapping, DTS/TrueHD/Atmos stereo downmix, and ASS/PGS/VobSub subtitles.</p>
+          </article>
 
-        <div class="reason-card">
-          <h3>Stremio & CloudStream</h3>
-          <p>Drop in your Stremio manifests and CloudStream repos inside one unified resolver with signed GitHub updates.</p>
-          <svg class="reason-icon" viewBox="0 0 64 64" fill="none">
-            <defs><linearGradient id="g4" x1="0" y1="0" x2="64" y2="64"><stop stop-color="#f43f5e"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs>
-            <rect x="10" y="10" width="19" height="19" rx="4" fill="url(#g4)"/>
-            <rect x="35" y="10" width="19" height="19" rx="4" fill="url(#g4)" fill-opacity="0.35" stroke="url(#g4)" stroke-width="2.5"/>
-            <rect x="10" y="35" width="19" height="19" rx="4" fill="url(#g4)" fill-opacity="0.35" stroke="url(#g4)" stroke-width="2.5"/>
-            <rect x="35" y="35" width="19" height="19" rx="4" fill="url(#g4)"/>
-          </svg>
-        </div>
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-badge">LINKS // UNIFIED</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+            </div>
+            <h3>Stremio &amp; CloudStream</h3>
+            <p>Install Stremio v3 manifests and CloudStream repositories inside one ranked stream resolver with live speed probing and an instant in-player Links switcher.</p>
+          </article>
 
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-badge">SMART // EPISODES</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+            </div>
+            <h3>Skip Intro, Outro &amp; Play Next</h3>
+            <p>Combines embedded MKV chapters, AniSkip, and IntroDB timestamps for pinpoint Skip Intro/Outro prompts and seamless automatic episode transitions.</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-badge">SYNC // TMDB</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+            </div>
+            <h3>1-Click TMDB Sync</h3>
+            <p>Connect your TMDB account once to back up Watchlist, likes, custom lists, and personalized recommendations across sessions without proprietary accounts.</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-badge">OTA // SIGNED</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+            </div>
+            <h3>Automatic GitHub Updates</h3>
+            <p>Built-in signed update checker inside My OpenFlix detects new GitHub Releases and fetches the matching ABI build for your phone automatically.</p>
+          </article>
+        </div>
       </div>
     </section>
 
-    <!-- 3. FREQUENTLY ASKED QUESTIONS -->
-    <section class="section" id="faq">
-      <h2 class="section-title">Frequently Asked Questions</h2>
-      <div class="faq-list">
+    <!-- ================= LIVE CHANGELOG & DIRECT DOWNLOADS ================= -->
+    <section class="section" id="changelog">
+      <div class="container release-grid">
+        <!-- Left: Live What's New Card -->
+        <article class="changelog-card">
+          <div class="changelog-head">
+            <div>
+              <span class="section-eyebrow">LIVE GITHUB RELEASE NOTES</span>
+              <h2 class="changelog-title">
+                What's New in <span data-release-version>Latest</span>
+              </h2>
+            </div>
+            <span class="mono-tag mono-tag--dark tabular" id="release-date-pill">SYNCED LIVE</span>
+          </div>
 
-        <div class="faq-item">
-          <button class="faq-q"><span>What is OpenFlix?</span><span class="faq-plus"></span></button>
-          <div class="faq-a">OpenFlix is a free, open-source Android media client built in Flutter. It pairs a matte-black OLED interface and native libmpv playback with 1-click TMDB sync and Stremio/CloudStream addon support.</div>
+          <div id="changelog-body" class="changelog-body">
+            <ul class="changelog-list">
+              <li>Universal libmpv playback with automatic hardware-to-software decode fallback.</li>
+              <li>Resilient HTTP/HLS reconnects and continuous position preservation across drops.</li>
+              <li>Pinpoint Skip Intro, Skip Outro, and seamless Play Next episode transitions.</li>
+              <li>Unified Stremio v3 and CloudStream stream resolver with OLED-black error handling.</li>
+            </ul>
+          </div>
+
+          <div class="changelog-footer">
+            <a
+              id="release-html-link"
+              class="text-link-bold"
+              href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Read full release on GitHub &rarr;
+            </a>
+          </div>
+        </article>
+
+        <!-- Right: Direct Download Cards -->
+        <div class="download-stack" id="download">
+          <article class="download-card download-card--primary">
+            <div class="download-card-top">
+              <span class="mono-tag mono-tag--yellow">RECOMMENDED // 64-BIT</span>
+              <span class="download-version tabular" data-release-version>Latest</span>
+            </div>
+            <h3>Android arm64-v8a APK</h3>
+            <p>Best for all modern Android phones. Smaller download with full bundled libmpv codecs.</p>
+            <div class="download-meta-row">
+              <span id="arm64-size-pill" class="meta-chip tabular">Signed APK</span>
+              <span id="arm64-dl-count" class="meta-chip tabular">GitHub Releases</span>
+            </div>
+            <a
+              class="btn-yellow-full"
+              data-dl-arm64
+              href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest"
+            >
+              <span>Download arm64-v8a APK</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            </a>
+          </article>
+
+          <article class="download-card">
+            <div class="download-card-top">
+              <span class="mono-tag">COMPATIBILITY // ALL ABIs</span>
+              <span class="download-version tabular" data-release-version>Latest</span>
+            </div>
+            <h3>Android Universal APK</h3>
+            <p>Includes 32-bit and 64-bit native libraries for older devices or Android TV boxes.</p>
+            <div class="download-meta-row">
+              <span id="univ-size-pill" class="meta-chip meta-chip--light tabular">Signed APK</span>
+              <span id="univ-dl-count" class="meta-chip meta-chip--light tabular">arm64 + armv7</span>
+            </div>
+            <a
+              class="btn-dark-full"
+              data-dl-universal
+              href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest"
+            >
+              <span>Download Universal APK</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            </a>
+          </article>
         </div>
-
-        <div class="faq-item">
-          <button class="faq-q"><span>Which APK file should I download?</span><span class="faq-plus"></span></button>
-          <div class="faq-a">Download the <strong>arm64-v8a</strong> APK (~78 MB) for almost all modern Android smartphones. If you're using an older 32-bit device or aren't sure of your CPU architecture, grab the <strong>Universal APK</strong> (~118 MB).</div>
-        </div>
-
-        <div class="faq-item">
-          <button class="faq-q"><span>How do addons and streams work?</span><span class="faq-plus"></span></button>
-          <div class="faq-a">OpenFlix is strictly a media client and metadata browser — it does not host or distribute any content. You connect your own third-party Stremio manifests or CloudStream repositories inside the Addons tab, and OpenFlix resolves and plays them via libmpv.</div>
-        </div>
-
-        <div class="faq-item">
-          <button class="faq-q"><span>Will it run smoothly on budget Android phones?</span><span class="faq-plus"></span></button>
-          <div class="faq-a">Yes. OpenFlix is profiled and tested daily on a 3GB RAM Android device with strict image cache limits, lazy collection loading, and custom carousel snap physics to keep scrolling smooth at 60fps.</div>
-        </div>
-
-        <div class="faq-item">
-          <button class="faq-q"><span>How do I stay updated?</span><span class="faq-plus"></span></button>
-          <div class="faq-a">OpenFlix includes a built-in update checker inside <strong>My OpenFlix</strong>. Whenever a new signed release drops on GitHub, the app automatically detects it and grabs the matching APK for your device.</div>
-        </div>
-
       </div>
     </section>
 
-    <!-- BOTTOM DOWNLOAD CTA -->
-    <div class="bottom-cta">
-      <p>Ready to watch? Grab the latest signed Android APK directly from GitHub Releases.</p>
-      <div class="hero-cta-row">
-        <a id="dl-arm64-bottom" class="btn-hero" href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">
-          <span>Download OpenFlix</span>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </a>
-      </div>
-    </div>
+    <!-- ================= FAQ (NATIVE EXCLUSIVE ACCORDION) ================= -->
+    <section class="section" id="faq" aria-labelledby="faq-heading">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <span class="section-eyebrow">DOCUMENTATION // QUICK ANSWERS</span>
+            <h2 class="section-title" id="faq-heading">Frequently Asked Questions</h2>
+          </div>
+        </div>
 
-    <!-- FOOTER -->
-    <footer>
-      <div class="footer-links">
-        <a href="https://github.com/Husnain-code-byte/OpenFlix" target="_blank" rel="noopener">GitHub Repository</a>
-        <a href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest" target="_blank" rel="noopener">All Releases</a>
-        <a id="dl-universal-footer" href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">Universal APK</a>
-        <a href="https://discord.gg/y5QssSBcpJ" target="_blank" rel="noopener">Discord Community</a>
-      </div>
-      <p class="disclaimer">
-        OpenFlix is an open-source media client and metadata browser. It does not host, provide, or distribute any media content. Users are solely responsible for any third-party addons they configure.
-      </p>
-    </footer>
+        <div class="faq-list">
+          <details class="faq-item" name="openflix-faq" open>
+            <summary class="faq-summary">
+              <span>What is OpenFlix?</span>
+              <span class="faq-icon" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>OpenFlix is a free, open-source Android media client built in Flutter. It pairs a matte-black OLED interface and native <code>libmpv</code> playback with 1-click TMDB sync and Stremio/CloudStream addon support.</p>
+            </div>
+          </details>
 
+          <details class="faq-item" name="openflix-faq">
+            <summary class="faq-summary">
+              <span>Which APK file should I download?</span>
+              <span class="faq-icon" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Download the <strong>arm64-v8a</strong> APK for almost all modern Android smartphones. If you're using an older 32-bit device or aren't sure of your CPU architecture, grab the <strong>Universal APK</strong>.</p>
+            </div>
+          </details>
+
+          <details class="faq-item" name="openflix-faq">
+            <summary class="faq-summary">
+              <span>How do addons and streams work?</span>
+              <span class="faq-icon" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>OpenFlix is strictly a media client and metadata browser — it does not host or distribute any content. You connect your own third-party Stremio manifests or CloudStream repositories inside the Addons tab, and OpenFlix resolves and plays them via <code>libmpv</code>.</p>
+            </div>
+          </details>
+
+          <details class="faq-item" name="openflix-faq">
+            <summary class="faq-summary">
+              <span>Will it run smoothly on budget Android phones?</span>
+              <span class="faq-icon" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Yes. OpenFlix is profiled and tested daily on a 3GB RAM Android device with strict image cache ceilings, lazy collection loading, and custom carousel snap physics to keep scrolling smooth at 60fps.</p>
+            </div>
+          </details>
+
+          <details class="faq-item" name="openflix-faq">
+            <summary class="faq-summary">
+              <span>How do I stay updated?</span>
+              <span class="faq-icon" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>OpenFlix includes a built-in update checker inside <strong>My OpenFlix</strong>. Whenever a new signed release drops on GitHub, the app detects it and downloads the matching APK for your device.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <!-- SCREENSHOT LIGHTBOX -->
-  <div class="lightbox" id="lightbox" aria-hidden="true">
-    <img id="lb-img" src="" alt="OpenFlix Screenshot Full Preview" />
-  </div>
+  <!-- ================= OLED FOOTER ================= -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-brand-col">
+        <div class="footer-brand">
+          <img src="./favicon.png" alt="" width="24" height="24" loading="lazy" />
+          <span>OPENFLIX</span>
+        </div>
+        <p class="footer-disclaimer">
+          OpenFlix is an open-source media client and metadata browser licensed under GPL-3.0. It does not host, provide, or distribute any media content. Users are solely responsible for any third-party addons they configure.
+        </p>
+      </div>
 
-  <script>
-    // 1. Compact 10-column alternating vertical poster wall (Movies, TV & Anime via btttr.cc)
-    const allPosters = [
-      "tt0816692", "tt15239678", "tt0468569", "tt1856101", "tt1375666", "tt15398776", "tt9362722",
-      "tt0903747", "tt4574334", "tt3581920", "tt5753856", "tt11280740", "tt0944947", "tt7366338",
-      "tt14986406", "tt2560140", "tt12343534", "tt9335498", "tt21209876", "tt0877057", "tt10233448",
-      "tt4154796", "tt1877830", "tt10366206", "tt1160419", "tt1745960", "tt6751668", "tt7286456",
-      "tt11126994", "tt2442560", "tt1190634", "tt3032476", "tt11198330", "tt8111088", "tt1196946",
-      "tt0133093", "tt0137523", "tt0388629", "tt13706018", "tt7441658", "tt1355642", "tt13616990"
-    ];
-    const speeds = [36, 42, 38, 44, 35, 41, 39, 45, 37, 43];
-    const wall = document.getElementById("poster-wall");
+      <nav class="footer-links" aria-label="Footer links">
+        <a href="https://github.com/Husnain-code-byte/OpenFlix" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+        <a href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest" target="_blank" rel="noopener noreferrer">All Releases</a>
+        <a data-dl-universal href="https://github.com/Husnain-code-byte/OpenFlix/releases/latest">Universal APK</a>
+        <a href="https://discord.gg/y5QssSBcpJ" target="_blank" rel="noopener noreferrer">Discord Community</a>
+      </nav>
+    </div>
+  </footer>
 
-    for (let i = 0; i < 10; i++) {
-      const col = document.createElement("div");
-      col.className = "poster-col " + (i % 2 === 0 ? "up" : "down");
-      col.style.setProperty("--dur", speeds[i] + "s");
+  <!-- ================= NATIVE SCREENSHOT LIGHTBOX DIALOG ================= -->
+  <dialog id="lightbox" class="lightbox-dialog" closedby="any" aria-labelledby="lightbox-caption">
+    <form method="dialog" class="lightbox-chrome">
+      <p id="lightbox-caption" class="lightbox-caption"></p>
+      <button type="submit" class="lightbox-close" aria-label="Close screenshot preview">
+        Close &times;
+      </button>
+    </form>
+    <div class="lightbox-stage">
+      <img id="lb-img" src="" alt="" width="714" height="1599" />
+    </div>
+  </dialog>
 
-      const track = document.createElement("div");
-      track.className = "poster-track";
-
-      const start = (i * 5) % allPosters.length;
-      const ids = Array.from({ length: 7 }, (_, k) => allPosters[(start + k) % allPosters.length]);
-
-      ids.concat(ids).forEach((id, j) => {
-        const tile = document.createElement("div");
-        tile.className = "poster-tile";
-        const img = document.createElement("img");
-        img.src = `https://btttr.cc/poster-a/imdb/poster-default/${id}.jpg`;
-        img.alt = "";
-        img.decoding = "async";
-        img.loading = j < 5 ? "eager" : "lazy";
-        img.onload = () => img.classList.add("loaded");
-        img.onerror = () => (tile.style.display = "none");
-        tile.appendChild(img);
-        track.appendChild(tile);
-      });
-
-      col.appendChild(track);
-      wall.appendChild(col);
-    }
-
-    // 2. Carousel arrows
-    const shotsRow = document.getElementById("shots-row");
-    document.getElementById("scroll-left").addEventListener("click", () => {
-      shotsRow.scrollBy({ left: -260, behavior: "smooth" });
-    });
-    document.getElementById("scroll-right").addEventListener("click", () => {
-      shotsRow.scrollBy({ left: 260, behavior: "smooth" });
-    });
-
-    // 3. Screenshot Lightbox
-    const lightbox = document.getElementById("lightbox");
-    const lbImg = document.getElementById("lb-img");
-    document.querySelectorAll(".shot-card").forEach(card => {
-      card.addEventListener("click", () => {
-        lbImg.src = card.dataset.full;
-        lightbox.classList.add("open");
-      });
-    });
-    lightbox.addEventListener("click", () => lightbox.classList.remove("open"));
-    document.addEventListener("keydown", e => {
-      if (e.key === "Escape") lightbox.classList.remove("open");
-    });
-
-    // 4. FAQ Accordion
-    document.querySelectorAll(".faq-q").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const item = btn.parentElement;
-        const wasOpen = item.classList.contains("open");
-        document.querySelectorAll(".faq-item").forEach(el => el.classList.remove("open"));
-        if (!wasOpen) item.classList.add("open");
-      });
-    });
-
-    // 5. Auto-fetch latest GitHub Release APKs
-    fetch("https://api.github.com/repos/Husnain-code-byte/OpenFlix/releases/latest")
-      .then(r => r.json())
-      .then(data => {
-        if (data.tag_name) {
-          document.getElementById("dl-label").textContent = `Download ${data.tag_name}`;
-        }
-        const assets = data.assets || [];
-        const arm64 = assets.find(a => a.name.includes("arm64-v8a") && a.name.endsWith(".apk"));
-        const univ = assets.find(a => a.name.includes("universal") && a.name.endsWith(".apk"));
-
-        if (arm64) {
-          ["dl-arm64", "dl-arm64-bottom", "top-dl"].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.href = arm64.browser_download_url;
-          });
-          const mb = (arm64.size / (1024 * 1024)).toFixed(1);
-          document.getElementById("apk-meta").textContent = `Signed arm64-v8a APK (${mb} MB)`;
-        }
-        if (univ) {
-          ["dl-universal", "dl-universal-footer"].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.href = univ.browser_download_url;
-          });
-        }
-      })
-      .catch(() => {});
-  </script>
+  <script src="./app.js" defer></script>
 </body>
 </html>

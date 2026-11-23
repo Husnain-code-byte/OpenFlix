@@ -93,7 +93,10 @@ class PrefetchSnapshot extends Equatable {
             best.languageMatchTier == LanguageMatchTier.primaryMultiAudio;
     final goodRes =
         best.meta.resolutionHeight >= 720 || best.meta.isAdaptiveMaster;
-    return isPrimary && goodRes && best.probe?.isAlive == true;
+    return isPrimary &&
+        goodRes &&
+        best.probe?.isAlive == true &&
+        best.probe?.isInconclusive != true;
   }
 
   PrefetchSnapshot copyWith({
@@ -363,8 +366,11 @@ class StreamPrefetchController extends Notifier<Map<String, PrefetchSnapshot>> {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (!forceRefresh && existingSnap != null) {
       final fresh = nowMs - existingSnap.startedAtMs < _ttlMs;
-      if (existingSnap.isResolving ||
-          (fresh && existingSnap.rankedStreams.isNotEmpty)) {
+      final sameEpisode = existingSnap.query.season == rawQuery.season &&
+          existingSnap.query.episode == rawQuery.episode;
+      final hasPlayable =
+          existingSnap.rankedStreams.any((r) => r.stream.canPlayInternally);
+      if (sameEpisode && (existingSnap.isResolving || (fresh && hasPlayable))) {
         _touchLru(key);
         return;
       }
@@ -993,23 +999,46 @@ class StreamPrefetchController extends Notifier<Map<String, PrefetchSnapshot>> {
     final s = q.season ?? 1;
     final e = q.episode ?? 1;
 
+    void addUnique(String id) {
+      if (id.isNotEmpty && !ids.contains(id)) ids.add(id);
+    }
+
     if (q.imdbId != null && q.imdbId!.isNotEmpty) {
-      ids.add(q.mediaType == 'series' ? '${q.imdbId}:$s:$e' : q.imdbId!);
+      final cleanImdb = q.imdbId!.split(':').first.trim();
+      addUnique(q.mediaType == 'series' ? '$cleanImdb:$s:$e' : cleanImdb);
     }
     if (q.kitsuId != null) {
-      ids.add(q.mediaType == 'series' ? 'kitsu:${q.kitsuId}:$e' : 'kitsu:${q.kitsuId}');
+      addUnique(q.mediaType == 'series' ? 'kitsu:${q.kitsuId}:$e' : 'kitsu:${q.kitsuId}');
     }
     if (q.tmdbId != null) {
-      ids.add(q.mediaType == 'series' ? 'tmdb:${q.tmdbId}:$s:$e' : 'tmdb:${q.tmdbId}');
+      addUnique(q.mediaType == 'series' ? 'tmdb:${q.tmdbId}:$s:$e' : 'tmdb:${q.tmdbId}');
     }
-    if (q.rawMetaId != null &&
-        q.rawMetaId!.isNotEmpty &&
-        !ids.contains(q.rawMetaId)) {
-      ids.add(
-        q.mediaType == 'series' && !q.rawMetaId!.contains(':') && q.season != null
-            ? '${q.rawMetaId}:$s:$e'
-            : q.rawMetaId!,
-      );
+    final raw = q.rawMetaId?.trim();
+    if (raw != null && raw.isNotEmpty) {
+      // Strip internal canonical prefixes (e.g. `imdb:tt123`, `raw:series:...`)
+      // and any stale `:season:episode` suffix from a previous episode so
+      // Stremio addons ALWAYS receive the target `(season, episode)`.
+      if (!raw.startsWith('raw:') && !raw.startsWith('tmdb:series:') && !raw.startsWith('tmdb:movie:')) {
+        var base = raw.startsWith('imdb:') ? raw.substring('imdb:'.length) : raw;
+        final parts = base.split(':');
+        if (q.mediaType == 'series') {
+          if (parts.length >= 3 &&
+              int.tryParse(parts[parts.length - 1]) != null &&
+              int.tryParse(parts[parts.length - 2]) != null) {
+            base = parts.sublist(0, parts.length - 2).join(':');
+          } else if (parts.length == 2 &&
+              parts[0].toLowerCase() == 'kitsu' &&
+              int.tryParse(parts[1]) != null) {
+            addUnique('kitsu:${parts[1]}:$e');
+            return ids;
+          }
+          if (base.isNotEmpty && !base.startsWith('anilist:')) {
+            addUnique('$base:$s:$e');
+          }
+        } else if (base.isNotEmpty && !base.startsWith('anilist:')) {
+          addUnique(base);
+        }
+      }
     }
     return ids;
   }

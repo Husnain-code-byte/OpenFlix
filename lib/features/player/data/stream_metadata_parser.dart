@@ -178,6 +178,10 @@ abstract final class StreamMetadataParser {
     final isAdaptiveMaster =
         stream.transport == StreamTransport.hls && resolutionHeight == 0;
 
+    final hdrFormat = _parseHdr(combinedRaw);
+    final isDolbyVisionProfile5Only =
+        _isDolbyVisionProfile5Only(combinedRaw, hdrFormat);
+
     return ParsedStreamMetadata(
       detectedAudioLanguages: Set.unmodifiable(audioLangs),
       detectedSubtitleLanguages: Set.unmodifiable(subLangs),
@@ -185,7 +189,8 @@ abstract final class StreamMetadataParser {
       isHardcodedSub: isHardSub,
       resolutionHeight: resolutionHeight,
       isAdaptiveMaster: isAdaptiveMaster,
-      hdrFormat: _parseHdr(combinedRaw),
+      hdrFormat: hdrFormat,
+      isDolbyVisionProfile5Only: isDolbyVisionProfile5Only,
       videoCodec: _parseVideoCodec(combinedRaw),
       audioCodec: _parseAudioCodec(combinedRaw),
       audioChannels: _parseAudioChannels(combinedRaw),
@@ -248,6 +253,21 @@ abstract final class StreamMetadataParser {
       return HdrFormat.hlg;
     }
     return HdrFormat.none;
+  }
+
+  /// True when a stream is tagged Dolby Vision without an HDR10/HDR/HLG
+  /// fallback layer (or explicitly tagged Profile 5), which can render with
+  /// green/purple tint on non-DV Android displays.
+  static bool _isDolbyVisionProfile5Only(String text, HdrFormat hdrFormat) {
+    if (hdrFormat != HdrFormat.dolbyVision) return false;
+    final lower = text.toLowerCase();
+    if (RegExp(r'\b(p5|profile[\s._-]?5|dv[\s._-]?p?5|dovi[\s._-]?p?5)\b')
+        .hasMatch(lower)) {
+      return true;
+    }
+    final hasHdrFallback =
+        RegExp(r'\b(hdr10\+|hdr10plus|hdr10|hdr|hlg)\b').hasMatch(lower);
+    return !hasHdrFallback;
   }
 
   static VideoCodecHint _parseVideoCodec(String text) {
