@@ -26,11 +26,12 @@
 <p align="center">
   <img src="https://github.com/user-attachments/assets/4f7c7e43-7cc9-401c-ac59-0d85bf79cc5e" width="13.5%" alt="Home Feed" />
   <img src="https://github.com/user-attachments/assets/056e4425-92eb-4b2d-8b4f-85ea925bcf5d" width="13.5%" alt="Curated Rows" />
+  <img src="https://github.com/user-attachments/assets/3d153118-90ea-4f25-9d74-e0aa0e592d5d" width="13.5%" alt="Movie Details" />
+  <img src="https://github.com/user-attachments/assets/1e64599e-99d2-4619-8f24-e0aa0e592d5d" width="13.5%" alt="TV Show Details" />
   <img src="https://github.com/user-attachments/assets/0cdea7c5-6983-48f9-b31a-0671c99a288e" width="13.5%" alt="Search" />
   <img src="https://github.com/user-attachments/assets/9ef0301c-fbfb-483b-8c01-eb0b08ac5c8d" width="13.5%" alt="Collections" />
   <img src="https://github.com/user-attachments/assets/2634cc56-7b63-4b8e-a0c0-6676f541c4fe" width="13.5%" alt="Player & Addons" />
-  <img src="https://github.com/user-attachments/assets/3d153118-90ea-4f25-9d74-e0aa0e592d5d" width="13.5%" alt="Movie Details" />
-  <img src="https://github.com/user-attachments/assets/1e64599e-99d2-4619-8f24-e0aa0e592d5d" width="13.5%" alt="TV Show Details" />
+
 </p>
 
 ## Features
