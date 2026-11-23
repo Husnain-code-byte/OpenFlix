@@ -72,7 +72,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   TmdbRepository? _repo;
-  String _installedVersion = '1.1.0';
+  String _installedVersion = '1.1.1';
   bool _isCheckingUpdate = false;
   String? _updateStatusMessage;
   bool _updateStatusIsError = false;

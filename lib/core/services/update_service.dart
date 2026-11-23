@@ -56,7 +56,7 @@ class ReleaseUpdateInfo {
   /// Normalized semantic version string without leading `v` (e.g., `1.0.1`).
   final String cleanVersion;
 
-  /// Currently installed app version (e.g., `1.1.0`).
+  /// Currently installed app version (e.g., `1.1.1`).
   final String installedVersion;
 
   /// Display title of the release.
@@ -153,7 +153,7 @@ class UpdateService {
         return version;
       }
     } catch (_) {}
-    return '1.1.0';
+    return '1.1.1';
   }
 
   /// Strips leading `v`/`V`, pre-release labels, and build metadata.
